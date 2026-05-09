@@ -1,21 +1,72 @@
 // =============================================================================
 // api/market.js -- Vercel serverless function
 // Fetches SPY, QQQ, HYG, RSP, VIX, Fear & Greed
-// Primary: Polygon.io  |  VIX: Yahoo Finance  |  F&G: CNN
-// API keys live in Vercel environment variables -- never in frontend code
+// Shared cache in Supabase -- one fetch serves all users
+// Cache TTL: 4 hours. Polygon is only called if cache is stale.
 // =============================================================================
 
-const POLYGON_KEY = process.env.POLYGON_KEY;
+const POLYGON_KEY  = process.env.POLYGON_KEY;
+const SUPABASE_URL = process.env.SUPABASE_URL;
+const SUPABASE_KEY = process.env.SUPABASE_SERVICE_KEY;
+const CACHE_TTL_MS = 4 * 60 * 60 * 1000; // 4 hours
+const CACHE_ID     = 'market_v1';
 
+// ---------------------------------------------------------------------------
+// Supabase cache helpers (plain fetch, no SDK needed server-side)
+// ---------------------------------------------------------------------------
+async function cacheRead() {
+  try {
+    const res = await fetch(
+      `${SUPABASE_URL}/rest/v1/market_cache?id=eq.${CACHE_ID}&select=data,fetched_at`,
+      {
+        headers: {
+          'apikey':        SUPABASE_KEY,
+          'Authorization': `Bearer ${SUPABASE_KEY}`,
+        },
+        signal: AbortSignal.timeout(5000),
+      }
+    );
+    const rows = await res.json();
+    if (!rows.length) return null;
+    const age = Date.now() - new Date(rows[0].fetched_at).getTime();
+    if (age > CACHE_TTL_MS) return null;
+    return rows[0].data;
+  } catch (e) {
+    return null;
+  }
+}
+
+async function cacheWrite(data) {
+  try {
+    await fetch(
+      `${SUPABASE_URL}/rest/v1/market_cache`,
+      {
+        method: 'POST',
+        headers: {
+          'apikey':        SUPABASE_KEY,
+          'Authorization': `Bearer ${SUPABASE_KEY}`,
+          'Content-Type':  'application/json',
+          'Prefer':        'resolution=merge-duplicates',
+        },
+        body:   JSON.stringify({ id: CACHE_ID, data, fetched_at: new Date().toISOString() }),
+        signal: AbortSignal.timeout(5000),
+      }
+    );
+  } catch (e) {
+    console.warn('Cache write failed:', e.message);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Polygon -- daily OHLCV + technicals
+// ---------------------------------------------------------------------------
 async function fetchPolygonDaily(sym) {
-  // Get last 200 trading days of OHLCV
   const to   = new Date().toISOString().slice(0, 10);
   const from = new Date(Date.now() - 365 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
   const url  = `https://api.polygon.io/v2/aggs/ticker/${sym}/range/1/day/${from}/${to}?adjusted=true&sort=desc&limit=200&apiKey=${POLYGON_KEY}`;
 
   const res = await fetch(url, { signal: AbortSignal.timeout(12000) });
   const d   = await res.json();
-
   if (!d.results || d.results.length === 0) return null;
 
   const closes = d.results.map(r => r.c);
@@ -35,10 +86,10 @@ async function fetchPolygonDaily(sym) {
     : 0;
 
   // HV30
-  const sl  = closes.slice(0, 31);
-  const ret = sl.slice(0, -1).map((c, i) => Math.log(c / sl[i + 1]));
-  const m   = ret.reduce((a, b) => a + b, 0) / ret.length;
-  const v   = ret.reduce((a, r) => a + Math.pow(r - m, 2), 0) / (ret.length - 1);
+  const sl   = closes.slice(0, 31);
+  const ret  = sl.slice(0, -1).map((c, i) => Math.log(c / sl[i + 1]));
+  const m    = ret.reduce((a, b) => a + b, 0) / ret.length;
+  const v    = ret.reduce((a, r) => a + Math.pow(r - m, 2), 0) / (ret.length - 1);
   const hv30 = Math.sqrt(v * 252);
 
   // Support / resistance
@@ -67,33 +118,40 @@ async function fetchPolygonDaily(sym) {
   };
 }
 
+// ---------------------------------------------------------------------------
+// VIX -- Yahoo Finance (unofficial, may occasionally fail)
+// ---------------------------------------------------------------------------
 async function fetchVIX() {
   try {
     const url = 'https://query1.finance.yahoo.com/v8/finance/chart/%5EVIX?interval=1d&range=15d';
     const res = await fetch(url, {
-      signal: AbortSignal.timeout(10000),
+      signal:  AbortSignal.timeout(10000),
       headers: { 'User-Agent': 'Mozilla/5.0' },
     });
-    const d  = await res.json();
-    const pr = d.chart.result[0].indicators.quote[0].close.filter(Boolean);
-    const ts = d.chart.result[0].timestamp;
-    const cur    = pr[pr.length - 1];
-    const prev5  = pr[Math.max(0, pr.length - 6)];
-    const date   = new Date(ts[ts.length - 1] * 1000).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+    const d   = await res.json();
+    const pr  = d.chart.result[0].indicators.quote[0].close.filter(Boolean);
+    const ts  = d.chart.result[0].timestamp;
+    const cur   = pr[pr.length - 1];
+    const prev5 = pr[Math.max(0, pr.length - 6)];
+    const date  = new Date(ts[ts.length - 1] * 1000)
+      .toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
     return { level: parseFloat(cur.toFixed(2)), chg: parseFloat(((cur - prev5) / prev5 * 100).toFixed(1)), date, ok: true };
   } catch (e) {
     return { level: null, chg: 0, date: 'N/A', ok: false };
   }
 }
 
+// ---------------------------------------------------------------------------
+// Fear & Greed -- CNN (unofficial, may occasionally fail)
+// ---------------------------------------------------------------------------
 async function fetchFearGreed() {
   try {
     const url = 'https://production.dataviz.cnn.io/index/fearandgreed/graphdata';
     const res = await fetch(url, {
-      signal: AbortSignal.timeout(8000),
+      signal:  AbortSignal.timeout(8000),
       headers: { 'User-Agent': 'Mozilla/5.0', 'Referer': 'https://www.cnn.com/' },
     });
-    const d = await res.json();
+    const d     = await res.json();
     const score = d.fear_and_greed?.score;
     if (score === undefined) return null;
     return { score: Math.round(score), rating: d.fear_and_greed?.rating || 'N/A' };
@@ -102,12 +160,31 @@ async function fetchFearGreed() {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Handler
+// ---------------------------------------------------------------------------
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS');
   if (req.method === 'OPTIONS') return res.status(200).end();
-  if (req.method !== 'GET') return res.status(405).json({ error: 'Method not allowed' });
+  if (req.method !== 'GET')    return res.status(405).json({ error: 'Method not allowed' });
 
+  const force = req.query.force === 'true';
+
+  // Serve from shared Supabase cache if fresh
+  if (!force) {
+    const cached = await cacheRead();
+    if (cached) {
+      return res.status(200).json({
+        ok:        true,
+        data:      cached,
+        fromCache: true,
+        fetchedAt: cached.fetchedAt,
+      });
+    }
+  }
+
+  // Cache miss -- fetch fresh from all sources
   try {
     const [vix, fg, spy, qqq, hyg, rsp] = await Promise.all([
       fetchVIX(),
@@ -118,11 +195,15 @@ export default async function handler(req, res) {
       fetchPolygonDaily('RSP'),
     ]);
 
-    return res.status(200).json({
-      ok: true,
-      data: { vix, fg, spy, qqq, hyg, rsp },
+    const data = {
+      vix, fg, spy, qqq, hyg, rsp,
       fetchedAt: new Date().toISOString(),
-    });
+    };
+
+    // Write to shared cache -- non-blocking, failure is non-fatal
+    cacheWrite(data);
+
+    return res.status(200).json({ ok: true, data, fromCache: false, fetchedAt: data.fetchedAt });
   } catch (err) {
     console.error('Market fetch error:', err);
     return res.status(500).json({ ok: false, error: err.message });
