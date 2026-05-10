@@ -1020,6 +1020,8 @@ async function runAnalysis(){
         '<strong>Analysis Error:</strong> '+(d.error||'Unknown error')+'</div>';
       return;
     }
+    // DEBUG -- remove after confirming fields
+    console.log('[OP] Analysis response strategyGroup:', d.strategyGroup, 'fields:', Object.keys(d).join(','));
 
     // Store result for log-from-analysis feature
     azResult={
