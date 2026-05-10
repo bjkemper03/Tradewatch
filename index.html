@@ -8,6 +8,7 @@
 <title>OptionsPlus</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.6/dist/umd/supabase.min.js"></script>
   <script src="./js/scoring.js"></script>
+  <script src="./js/tradeCalc.js"></script>
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap');
 :root{
@@ -596,7 +597,7 @@ const SEC_META = [
 const $ = id => document.getElementById(id);
 const sigC = s => s==='GREEN'?'#22c55e':s==='YELLOW'?'#f59e0b':'#ef4444';
 const barC = s => s>=62?'#22c55e':s>=42?'#f59e0b':'#ef4444';
-const cushC = p => p >= prefs.cushionMin+2 ? '#22c55e' : p >= prefs.cushionMin ? '#f59e0b' : '#ef4444';
+// cushC loaded from js/tradeCalc.js
 
 function toast(m, d=2500) {
   const t=$('toast'); t.textContent=m; t.style.display='block';
@@ -608,114 +609,17 @@ function saveTrades(){localStorage.setItem(TK,JSON.stringify(trades));}
 function saveHist(){localStorage.setItem(HK,JSON.stringify(hist));}
 function savePrefs(){localStorage.setItem(CK.prefs,JSON.stringify(prefs));}
 
-function parseExp(str){
-  if(!str)return null;
-  const s=str.trim().replace(/-/g,'/');
-  const p=s.split('/');
-  if(p.length!==3)return null;
-  let[m,d,y]=p;
-  if(y.length===2)y='20'+y;
-  if(m.length<2)m=m.padStart(2,'0');
-  if(d.length<2)d=d.padStart(2,'0');
-  const dt=new Date(y+'-'+m+'-'+d+'T16:00:00');
-  return isNaN(dt.getTime())?null:dt;
-}
-function calcDTE(expStr){const d=parseExp(expStr);if(!d)return null;return Math.ceil((d-new Date())/86400000);}
-function safeNum(v,fb=0){const n=parseFloat(v);return Number.isFinite(n)?n:fb;}
-function isDebitStrat(s){return STRAT_GROUPS.DEBIT.includes(s);}
+// parseExp, calcDTE, safeNum, isDebitStrat loaded from js/tradeCalc.js
 
 // ============================================================
 // MATH / SCORING
 // ============================================================
-function ncdf(x){
-  const a=[.254829592,-.284496736,1.421413741,-1.453152027,1.061405429],p=.3275911;
-  const sgn=x<0?-1:1;x=Math.abs(x)/Math.sqrt(2);
-  const t2=1/(1+p*x);
-  let y=1-(((((a[4]*t2+a[3])*t2+a[2])*t2+a[1])*t2+a[0])*t2*Math.exp(-x*x));
-  return .5*(1+sgn*y);
-}
-function bsDelta(S,K,T,sig,type='put'){
-  if(!S||!K||!T||!sig||T<=0||sig<=0)return null;
-  const d1=(Math.log(S/K)+.5*sig*sig*T)/(sig*Math.sqrt(T));
-  return type==='call'?ncdf(d1):ncdf(d1)-1;
-}
+// ncdf, bsDelta loaded from js/tradeCalc.js
 // scoring functions loaded from js/scoring.js
 
 // ============================================================
-// COLLATERAL / BWB
-// ============================================================
-function calcBWBMaxLoss(legs,cr){
-  const buys=legs.filter(l=>l.a==='BUY').map(l=>safeNum(l.s)).filter(s=>s>0).sort((a,b)=>b-a);
-  const sells=legs.filter(l=>l.a==='SELL').map(l=>safeNum(l.s)).filter(s=>s>0);
-  if(buys.length<2||sells.length<1)return null;
-  const topLong=buys[0],bottomLong=buys[buys.length-1],short=sells[0];
-  if(!(topLong>short&&short>bottomLong))return null;
-  const contracts=legs.find(function(l){return l.a==='SELL'}) && legs.find(function(l){return l.a==='SELL'}).n||1;
-  const credit=safeNum(cr);
-  const upper=topLong-short,lower=short-bottomLong;
-  if(upper<=0||lower<=0)return null;
-  const rawLoss=(lower-upper)*100*contracts-(credit*100*contracts);
-  return{maxLoss:Math.max(0,rawLoss),upper,lower,topLong,short,bottomLong,contracts};
-}
-function calcCollateral(strat,legs,cr){
-  const sells=legs.filter(l=>l.a==='SELL'),buys=legs.filter(l=>l.a==='BUY');
-  const allLegs=[...sells,...buys];
-  const contracts=allLegs.length?Math.max(...allLegs.map(l=>l.n||1),1):1;
-  const credit=safeNum(cr);
-  const allStrikes=[...sells,...buys].map(l=>safeNum(l.s));
-  if(allStrikes.some(s=>s<=0))return 0;
-  if(strat==='CASH SECURED PUT')return safeNum(sells[0] && sells[0].s)*100;
-  if(strat==='COVERED CALL')return 0;
-  if(['PUT BUTTERFLY','CALL BUTTERFLY','PUT RATIO SPREAD','CALL RATIO SPREAD'].includes(strat)){
-    const b=calcBWBMaxLoss(legs,cr);return(b&&b.maxLoss>0)?b.maxLoss:0;
-  }
-  if(strat==='IRON CONDOR'||strat==='IRON BUTTERFLY'){
-    const puts=legs.filter(l=>l.t==='PUT'),calls=legs.filter(l=>l.t==='CALL');
-    const putSell=puts.find(l=>l.a==='SELL'),putBuy=puts.find(l=>l.a==='BUY');
-    const callSell=calls.find(l=>l.a==='SELL'),callBuy=calls.find(l=>l.a==='BUY');
-    const putW=(putSell&&putBuy)?Math.abs(safeNum(putSell.s)-safeNum(putBuy.s)):0;
-    const callW=(callSell&&callBuy)?Math.abs(safeNum(callSell.s)-safeNum(callBuy.s)):0;
-    const maxW=Math.max(putW,callW);
-    return maxW>0?Math.max(0,(maxW-credit)*100*contracts):0;
-  }
-  if(['LONG PUT','LONG CALL'].includes(strat))return credit*100*contracts;
-  if(sells.length>0&&buys.length>0){
-    const w=Math.abs(safeNum(sells[0] && sells[0].s)-safeNum(buys[0] && buys[0].s));
-    if(w<=0)return 0;
-    return Math.max(0,(w-credit)*100*contracts);
-  }
-  return 0;
-}
-function scoreBWB(legs,credit,price,dte,earningsRisk){
-  const cr=safeNum(credit);
-  const bwb=calcBWBMaxLoss(legs,cr);
-  const be=legs.find(l=>l.a==='SELL')?safeNum(legs.find(l=>l.a==='SELL').s)-cr:null;
-  if(!bwb||!be)return null;
-  const crDollar=cr*100*bwb.contracts;
-  const crRatio=bwb.maxLoss>0?parseFloat((crDollar/bwb.maxLoss*100).toFixed(1)):0;
-  const beCushion=price>0?parseFloat(((price-be)/price*100).toFixed(1)):0;
-  const dteOk=dte>=prefs.dteLow-2&&dte<=prefs.dteHigh+2;
-  const wingRatio=bwb.upper>0?parseFloat((bwb.lower/bwb.upper).toFixed(2)):0;
-  let score=0;const notes=[];
-  if(crRatio>=20){score+=35;notes.push('\u2713 Strong credit/risk ratio '+crRatio+'%');}
-  else if(crRatio>=12){score+=20;notes.push('\u25b3 Moderate credit ratio '+crRatio+'%');}
-  else{score+=5;notes.push('\u2717 Low credit ratio '+crRatio+'%');}
-  if(beCushion>=prefs.cushionMin+3){score+=30;notes.push('\u2713 '+beCushion+'% cushion to breakeven');}
-  else if(beCushion>=prefs.cushionMin){score+=18;notes.push('\u25b3 '+beCushion+'% cushion -- acceptable');}
-  else if(beCushion>=3){score+=8;notes.push('\u26a0 '+beCushion+'% cushion -- tight');}
-  else{notes.push('\u2717 '+beCushion+'% cushion -- too tight');}
-  if(!earningsRisk){score+=20;notes.push('\u2713 Earnings clear');}
-  else{notes.push('\u2717 Earnings within expiration');}
-  if(dteOk){score+=10;notes.push('\u2713 DTE '+dte+' in range');}
-  else{notes.push('\u25b3 DTE '+dte+' outside '+prefs.dteLow+'-'+prefs.dteHigh);}
-  if(wingRatio>=1.5&&wingRatio<=3){score+=5;notes.push('\u2713 Wing ratio '+wingRatio+':1');}
-  else{notes.push('\u25b3 Wing ratio '+wingRatio+':1');}
-  let grade,gc2,gl;
-  if(score>=75){grade='A';gc2='#22c55e';gl='Strong setup';}
-  else if(score>=50){grade='B';gc2='#f59e0b';gl='Acceptable -- monitor';}
-  else{grade='SKIP';gc2='#ef4444';gl='Below your criteria';}
-  return{grade,gc2,gl,score,notes,crRatio,beCushion,maxLoss:bwb.maxLoss,crDollar,be,wingRatio};
-}
+// calcBWBMaxLoss, calcBWBBreakeven, calcCollateral loaded from js/tradeCalc.js
+
 
 // ============================================================
 // DATA FETCHERS (use /api/* routes)
