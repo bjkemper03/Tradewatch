@@ -8,6 +8,7 @@
 <title>OptionsPlus</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.6/dist/umd/supabase.min.js"></script>
   <script src="./js/scoring.js"></script>
+  <script src="./js/ui.js"></script>
   <script src="./js/tradeCalc.js"></script>
   <script src="./js/marketData.js"></script>
   <script src="./js/pages/prefs.js"></script>
@@ -627,33 +628,11 @@ function savePrefs(){localStorage.setItem(CK.prefs,JSON.stringify(prefs));}
 // buildGuidance loaded from js/scoring.js
 
 // ============================================================
-// SHARED HTML HELPERS
-// ============================================================
-function mc2(l,v,c){return '<div style="background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:9px 11px"><div style="font-size:9px;color:var(--text3);font-weight:500;text-transform:uppercase;letter-spacing:.4px;margin-bottom:3px">'+l+'</div><div style="font-family:var(--mono);font-size:13px;font-weight:700;color:'+(c||'var(--text)')+'">'+v+'</div></div>';}
-function g2html(items){return '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px">'+items.join('')+'</div>';}
-function g3html(items){return '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin-bottom:10px">'+items.join('')+'</div>';}
-function sbar(l,s,w){const c=barC(s);return '<div class="sb-wrap"><div class="sb-row"><span style="color:var(--text2);font-size:11px">'+l+'</span><span style="color:'+c+';font-family:var(--mono);font-size:11px">'+Math.round(s)+'/100 &bull; '+w+'</span></div><div class="sb-track"><div class="sb-fill" style="width:'+s+'%;background:'+c+'"></div></div></div>';}
-function quickTile(label,val,col){return '<div class="tile"><div class="tile-label">'+label+'</div><div class="tile-value" style="color:'+col+';font-size:14px">'+val+'</div></div>';}
-function spinHtml(msg){return '<div class="lc"><div class="spin"></div><p>'+msg+'</p></div>';}
+// mc2, g2html, g3html, sbar, quickTile, spinHtml loaded from js/ui.js
 
 // ============================================================
 // GAUGE SVG
-// ============================================================
-function renderGauge(score,sig){
-  const col=sigC(sig);
-  const toRad=d=>d*Math.PI/180;
-  const cx=80,cy=75,r=58;
-  const startDeg=-210,endDeg=30;
-  const scoreDeg=startDeg+(score/100)*(endDeg-startDeg);
-  const arcX=d=>cx+r*Math.cos(toRad(d)),arcY=d=>cy+r*Math.sin(toRad(d));
-  const bgLarge=(endDeg-startDeg)>180?1:0;
-  const bgD='M'+arcX(startDeg).toFixed(1)+' '+arcY(startDeg).toFixed(1)+' A'+r+' '+r+' 0 '+bgLarge+' 1 '+arcX(endDeg).toFixed(1)+' '+arcY(endDeg).toFixed(1);
-  const scoreLarge=(scoreDeg-startDeg)>180?1:0;
-  const scoreD=score>0?'M'+arcX(startDeg).toFixed(1)+' '+arcY(startDeg).toFixed(1)+' A'+r+' '+r+' 0 '+scoreLarge+' 1 '+arcX(scoreDeg).toFixed(1)+' '+arcY(scoreDeg).toFixed(1):'';
-  const nx=(cx+(r-10)*Math.cos(toRad(scoreDeg))).toFixed(1);
-  const ny=(cy+(r-10)*Math.sin(toRad(scoreDeg))).toFixed(1);
-  return '<svg width="160" height="100" viewBox="0 0 160 100" style="display:block;margin:0 auto"><path d="'+bgD+'" stroke="#252d3d" stroke-width="9" fill="none" stroke-linecap="round"/>'+(scoreD?'<path d="'+scoreD+'" stroke="'+col+'" stroke-width="9" fill="none" stroke-linecap="round" opacity=".85"/>':'')+'<line x1="'+cx+'" y1="'+cy+'" x2="'+nx+'" y2="'+ny+'" stroke="'+col+'" stroke-width="2.5" stroke-linecap="round"/><circle cx="'+cx+'" cy="'+cy+'" r="3.5" fill="'+col+'"/></svg>';
-}
+// renderGauge loaded from js/ui.js
 
 // ============================================================
 // PAGE: OVERVIEW
