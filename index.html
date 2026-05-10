@@ -10,6 +10,7 @@
   <script src="./js/scoring.js"></script>
   <script src="./js/tradeCalc.js"></script>
   <script src="./js/marketData.js"></script>
+  <script src="./js/pages/prefs.js"></script>
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap');
 :root{
@@ -1554,45 +1555,7 @@ function editHist(){
 // ============================================================
 // PAGE: PREFS
 // ============================================================
-function renderPrefs(){
-  const el=$('page-prefs');if(!el)return;
-  el.innerHTML='<div class="fadeup">'+
-    '<div class="card">'+
-      '<div style="font-size:10px;color:var(--text3);font-weight:600;text-transform:uppercase;letter-spacing:.5px;margin-bottom:12px">Strategy Style</div>'+
-      '<div class="pref-row"><span style="font-size:12px;color:var(--text2)">Primary style</span>'+
-        '<select id="p-strat" style="width:120px;font-size:12px" onchange="prefs.primaryStrategy=this.value;savePrefs()">'+
-          ['credit','debit','mixed'].map(v=>'<option value="'+v+'"'+(prefs.primaryStrategy===v?' selected':'')+'>'+v.toUpperCase()+'</option>').join('')+
-        '</select></div>'+
-      '<div class="pref-row"><span style="font-size:12px;color:var(--text2)">DTE range</span>'+
-        '<div style="display:flex;gap:6px;align-items:center">'+
-          '<input type="number" value="'+prefs.dteLow+'" style="width:60px;font-family:var(--mono)" onblur="prefs.dteLow=parseInt(this.value)||14;savePrefs()">'+
-          '<span style="color:var(--text3);font-size:12px">to</span>'+
-          '<input type="number" value="'+prefs.dteHigh+'" style="width:60px;font-family:var(--mono)" onblur="prefs.dteHigh=parseInt(this.value)||21;savePrefs()">'+
-        '</div></div>'+
-    '</div>'+
-    '<div class="card">'+
-      '<div style="font-size:10px;color:var(--text3);font-weight:600;text-transform:uppercase;letter-spacing:.5px;margin-bottom:12px">Delta &amp; Cushion</div>'+
-      '<div class="pref-row"><span style="font-size:12px;color:var(--text2)">Delta target low</span><input type="number" value="'+prefs.deltaLow+'" step="0.01" style="width:80px;font-family:var(--mono)" onblur="prefs.deltaLow=parseFloat(this.value)||0.18;savePrefs()"></div>'+
-      '<div class="pref-row"><span style="font-size:12px;color:var(--text2)">Delta target high</span><input type="number" value="'+prefs.deltaHigh+'" step="0.01" style="width:80px;font-family:var(--mono)" onblur="prefs.deltaHigh=parseFloat(this.value)||0.28;savePrefs()"></div>'+
-      '<div class="pref-row"><span style="font-size:12px;color:var(--text2)">Min cushion %</span><input type="number" value="'+prefs.cushionMin+'" style="width:80px;font-family:var(--mono)" onblur="prefs.cushionMin=parseFloat(this.value)||5;savePrefs()"></div>'+
-      '<div class="pref-row"><span style="font-size:12px;color:var(--text2)">Min credit/width %</span><input type="number" value="'+prefs.creditWidthMin+'" style="width:80px;font-family:var(--mono)" onblur="prefs.creditWidthMin=parseFloat(this.value)||8;savePrefs()"></div>'+
-    '</div>'+
-    '<div class="card">'+
-      '<div style="font-size:10px;color:var(--text3);font-weight:600;text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px">Market Note</div>'+
-      '<textarea id="p-note" placeholder="Major world events, trade war..." style="min-height:70px;font-size:12px" onblur="prefs.marketNote=this.value;savePrefs()">'+( prefs.marketNote||'')+'</textarea>'+
-      '<div style="font-size:10px;color:var(--text3);margin-top:4px">Shows highlighted on Overview tab.</div>'+
-    '</div>'+
-    '<div class="card">'+
-      '<div style="font-size:10px;color:var(--text3);font-weight:600;text-transform:uppercase;letter-spacing:.5px;margin-bottom:12px">Account</div>'+
-      '<div class="pref-row"><span style="font-size:12px;color:var(--text2)">Display name</span><input type="text" value="'+(prefs.displayName||'')+'" style="width:130px;font-size:12px" onblur="prefs.displayName=this.value;savePrefs()"></div>'+
-      '<div class="pref-row"><span style="font-size:12px;color:var(--text2)">Account size $</span><input type="number" value="'+prefs.accountSize+'" style="width:110px;font-family:var(--mono)" onblur="prefs.accountSize=parseInt(this.value)||10000;savePrefs()"></div>'+
-      '<div style="font-size:10px;color:var(--text3);margin-top:6px">Signed in as: '+(currentUser && currentUser.email||'unknown')+'</div>'+
-    '</div>'+
-    '<div style="padding:0 12px 12px">'+
-      '<button class="btn btn-primary btn-w" onclick="savePrefs();toast(\'Preferences saved!\')">Save Preferences</button>'+
-    '</div>'+
-  '</div>';
-}
+// renderPrefs loaded from js/pages/prefs.js
 
 // ============================================================
 // PAGE ROUTER
