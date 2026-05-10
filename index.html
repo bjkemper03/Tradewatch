@@ -38,18 +38,27 @@ input[type=number]{-moz-appearance:textfield}
 .auth-logo{font-family:var(--sans);font-weight:700;font-size:40px;letter-spacing:-.5px;margin-bottom:4px}
 .auth-logo span{color:var(--blue2)}
 .auth-tag{font-size:11px;color:var(--text3);letter-spacing:1.5px;text-transform:uppercase;margin-bottom:40px}
-.auth-card{width:100%;max-width:360px;background:var(--surface);border:1px solid var(--border2);border-radius:14px;padding:28px}
+.auth-card{width:100%;max-width:380px;background:var(--surface);border:1px solid var(--border2);border-radius:14px;padding:28px}
 .auth-title{font-size:17px;font-weight:700;margin-bottom:5px}
 .auth-sub{font-size:12px;color:var(--text2);margin-bottom:20px;line-height:1.6}
 .auth-input{width:100%;background:var(--surface2);border:1px solid var(--border2);border-radius:8px;color:var(--text);font-family:var(--mono);font-size:14px;padding:12px 14px;outline:none;margin-bottom:10px;transition:border-color .15s}
 .auth-input:focus{border-color:var(--blue)}
 .auth-input::placeholder{color:var(--text3)}
-.auth-submit{width:100%;background:var(--blue);color:#fff;border:none;border-radius:8px;padding:13px;font-family:var(--sans);font-size:14px;font-weight:600;cursor:pointer;transition:background .15s}
+.auth-submit{width:100%;background:var(--blue);color:#fff;border:none;border-radius:8px;padding:13px;font-family:var(--sans);font-size:14px;font-weight:600;cursor:pointer;transition:background .15s;margin-bottom:6px}
 .auth-submit:hover{background:#5558e8}
 .auth-submit:disabled{background:var(--surface3);color:var(--text3);cursor:default}
-.auth-msg{margin-top:14px;font-size:12px;text-align:center;color:var(--text2);line-height:1.6}
+.auth-switch{width:100%;background:transparent;border:1px solid var(--border2);color:var(--text2);border-radius:8px;padding:11px;font-family:var(--sans);font-size:13px;font-weight:500;cursor:pointer;transition:all .15s}
+.auth-switch:hover{border-color:var(--text3);color:var(--text)}
+.auth-divider{display:flex;align-items:center;gap:10px;margin:14px 0}
+.auth-divider span{font-size:11px;color:var(--text3);white-space:nowrap}
+.auth-divider:before,.auth-divider:after{content:'';flex:1;height:1px;background:var(--border)}
+.auth-msg{margin-top:12px;font-size:12px;text-align:center;color:var(--text2);line-height:1.6}
 .auth-msg.ok{color:var(--green)}
 .auth-msg.err{color:var(--red)}
+.auth-link{color:var(--blue2);cursor:pointer;text-decoration:underline;font-size:12px}
+.auth-forgot{text-align:right;margin-bottom:10px}
+.auth-forgot span{font-size:11px;color:var(--text3);cursor:pointer}
+.auth-forgot span:hover{color:var(--blue2)}
 
 /* MAIN APP */
 #main-app{display:none}
@@ -208,12 +217,52 @@ select{appearance:none;cursor:pointer}
 <div id="auth-screen">
   <div class="auth-logo">Options<span>Plus</span></div>
   <div class="auth-tag">Professional Options Tracking</div>
-  <div class="auth-card">
+
+  <!-- LOGIN FORM -->
+  <div class="auth-card" id="auth-login-card">
     <div class="auth-title">Sign in</div>
-    <div class="auth-sub">Enter your email and we'll send you a magic link. No password needed.</div>
-    <input id="auth-email" class="auth-input" type="email" placeholder="your@email.com" autocomplete="email" />
-    <button id="auth-btn" class="auth-submit">Send Magic Link</button>
-    <div id="auth-msg" class="auth-msg"></div>
+    <div class="auth-sub">Welcome back. Enter your email and password.</div>
+    <input id="login-email" class="auth-input" type="email" placeholder="your@email.com" autocomplete="email" />
+    <div class="auth-forgot"><span onclick="showForgot()">Forgot password?</span></div>
+    <input id="login-password" class="auth-input" type="password" placeholder="Password" autocomplete="current-password" />
+    <button id="login-btn" class="auth-submit">Sign In</button>
+    <div class="auth-divider"><span>or</span></div>
+    <button class="auth-switch" onclick="showSignup()">Create an account</button>
+    <div id="login-msg" class="auth-msg"></div>
+  </div>
+
+  <!-- SIGNUP FORM -->
+  <div class="auth-card" id="auth-signup-card" style="display:none">
+    <div class="auth-title">Create account</div>
+    <div class="auth-sub">You'll get a one-time confirmation email. After that, just email + password to log in.</div>
+    <input id="signup-email" class="auth-input" type="email" placeholder="your@email.com" autocomplete="email" />
+    <input id="signup-password" class="auth-input" type="password" placeholder="Password (min 6 chars)" autocomplete="new-password" />
+    <input id="signup-confirm" class="auth-input" type="password" placeholder="Confirm password" autocomplete="new-password" />
+    <button id="signup-btn" class="auth-submit">Create Account</button>
+    <div class="auth-divider"><span>or</span></div>
+    <button class="auth-switch" onclick="showLogin()">Already have an account? Sign in</button>
+    <div id="signup-msg" class="auth-msg"></div>
+  </div>
+
+  <!-- FORGOT PASSWORD FORM -->
+  <div class="auth-card" id="auth-forgot-card" style="display:none">
+    <div class="auth-title">Reset password</div>
+    <div class="auth-sub">Enter your email and we'll send a password reset link.</div>
+    <input id="forgot-email" class="auth-input" type="email" placeholder="your@email.com" autocomplete="email" />
+    <button id="forgot-btn" class="auth-submit">Send Reset Link</button>
+    <div class="auth-divider"><span>or</span></div>
+    <button class="auth-switch" onclick="showLogin()">Back to sign in</button>
+    <div id="forgot-msg" class="auth-msg"></div>
+  </div>
+
+  <!-- CONFIRM EMAIL NOTICE -->
+  <div class="auth-card" id="auth-confirm-card" style="display:none">
+    <div style="text-align:center;padding:10px 0">
+      <div style="font-size:36px;margin-bottom:12px">&#9993;</div>
+      <div class="auth-title">Check your email</div>
+      <div class="auth-sub" style="margin-top:8px">We sent a confirmation link to <strong id="confirm-email-display"></strong>.<br>Click it to activate your account, then come back and sign in.</div>
+      <button class="auth-switch" style="margin-top:16px" onclick="showLogin()">Back to sign in</button>
+    </div>
   </div>
 </div>
 
@@ -228,7 +277,7 @@ select{appearance:none;cursor:pointer}
     <div class="hdr-actions">
       <div class="sig-badge" id="hdr-sig" style="display:none"></div>
       <button class="gear-btn" onclick="showPage('prefs')">&#9881;</button>
-      <button class="gear-btn" onclick="doSignOut()" style="font-size:10px">Out</button>
+      <button class="gear-btn" onclick="doSignOut()" style="font-size:10px;background:rgba(239,68,68,.12);border-color:rgba(239,68,68,.3);color:var(--red)">Log Out</button>
     </div>
   </div>
 
@@ -273,27 +322,85 @@ select{appearance:none;cursor:pointer}
 // ============================================================
 const SUPA_URL = 'https://mvohmjzwdvjilvljbivg.supabase.co';
 const SUPA_KEY = 'sb_publishable_yqEE2eE9r2iTOnzh43nA5A_hJLnxYeT';
+// ============================================================
+// SUPABASE + AUTH
+// ============================================================
 let _sbClient = null;
 let currentUser = null;
+
 try {
   _sbClient = window.supabase.createClient(SUPA_URL, SUPA_KEY);
-  console.log('[OP] Supabase client initialized');
+  console.log('[OP] Supabase initialized');
 } catch(e) {
   console.error('[OP] Supabase init failed:', e);
-  document.getElementById('auth-msg').textContent = 'Init error: ' + e.message;
-  document.getElementById('auth-msg').className = 'auth-msg err';
 }
 
-// Auth boot
+// ── Form switchers ────────────────────────────────────────────
+function showLogin() {
+  document.getElementById('auth-login-card').style.display  = 'block';
+  document.getElementById('auth-signup-card').style.display = 'none';
+  document.getElementById('auth-forgot-card').style.display = 'none';
+  document.getElementById('auth-confirm-card').style.display= 'none';
+  document.getElementById('login-msg').textContent = '';
+}
+function showSignup() {
+  document.getElementById('auth-login-card').style.display  = 'none';
+  document.getElementById('auth-signup-card').style.display = 'block';
+  document.getElementById('auth-forgot-card').style.display = 'none';
+  document.getElementById('auth-confirm-card').style.display= 'none';
+  document.getElementById('signup-msg').textContent = '';
+}
+function showForgot() {
+  document.getElementById('auth-login-card').style.display  = 'none';
+  document.getElementById('auth-signup-card').style.display = 'none';
+  document.getElementById('auth-forgot-card').style.display = 'block';
+  document.getElementById('auth-confirm-card').style.display= 'none';
+  document.getElementById('forgot-msg').textContent = '';
+}
+function showConfirmNotice(email) {
+  document.getElementById('auth-login-card').style.display  = 'none';
+  document.getElementById('auth-signup-card').style.display = 'none';
+  document.getElementById('auth-forgot-card').style.display = 'none';
+  document.getElementById('auth-confirm-card').style.display= 'block';
+  document.getElementById('confirm-email-display').textContent = email;
+}
+
+// ── App show/hide ─────────────────────────────────────────────
+function showAuthScreen() {
+  document.getElementById('auth-screen').classList.remove('hidden');
+  document.getElementById('main-app').classList.remove('visible');
+  showLogin();
+}
+function showApp() {
+  document.getElementById('auth-screen').classList.add('hidden');
+  document.getElementById('main-app').classList.add('visible');
+  initApp();
+}
+
+// ── Sign out ──────────────────────────────────────────────────
+async function doSignOut() {
+  if (!confirm('Sign out of OptionsPlus?')) return;
+  await _sbClient.auth.signOut();
+  currentUser = null;
+  showAuthScreen();
+}
+
+// ── Boot: check existing session ──────────────────────────────
 (async function bootAuth() {
-  const { data: { session } } = await _sbClient.auth.getSession();
-  if (session && session.user) {
-    currentUser = session.user;
-    showApp();
-  } else {
+  try {
+    const { data } = await _sbClient.auth.getSession();
+    if (data && data.session && data.session.user) {
+      currentUser = data.session.user;
+      showApp();
+    } else {
+      showAuthScreen();
+    }
+  } catch(e) {
+    console.error('[OP] Boot auth error:', e);
     showAuthScreen();
   }
-  _sbClient.auth.onAuthStateChange((_e, session) => {
+
+  _sbClient.auth.onAuthStateChange(function(_e, session) {
     if (session && session.user && !currentUser) {
       currentUser = session.user;
       showApp();
@@ -304,44 +411,113 @@ try {
   });
 })();
 
-function showAuthScreen() {
-  document.getElementById('auth-screen').classList.remove('hidden');
-  document.getElementById('main-app').classList.remove('visible');
-}
-function showApp() {
-  document.getElementById('auth-screen').classList.add('hidden');
-  document.getElementById('main-app').classList.add('visible');
-  initApp();
-}
-async function doSignOut() {
-  if (!confirm('Sign out?')) return;
-  await _sbClient.auth.signOut();
-  showAuthScreen();
-}
-
-document.getElementById('auth-btn').addEventListener('click', async function() {
-  console.log('[OP] Auth button clicked');
-  const email = document.getElementById('auth-email').value.trim();
-  const msg = document.getElementById('auth-msg');
-  const btn = document.getElementById('auth-btn');
-  if (!email || !email.includes('@')) { msg.textContent = 'Enter a valid email.'; msg.className = 'auth-msg err'; return; }
-  if (!_sbClient) { msg.textContent = 'Auth not initialized. Refresh page.'; msg.className = 'auth-msg err'; return; }
-  btn.disabled = true; btn.textContent = 'Sending...';
+// ── LOGIN ─────────────────────────────────────────────────────
+document.getElementById('login-btn').addEventListener('click', async function() {
+  var email = document.getElementById('login-email').value.trim();
+  var password = document.getElementById('login-password').value;
+  var msg = document.getElementById('login-msg');
+  var btn = document.getElementById('login-btn');
   msg.textContent = ''; msg.className = 'auth-msg';
+  if (!email || !email.includes('@')) { msg.textContent = 'Enter a valid email.'; msg.className = 'auth-msg err'; return; }
+  if (!password) { msg.textContent = 'Enter your password.'; msg.className = 'auth-msg err'; return; }
+  if (!_sbClient) { msg.textContent = 'Auth not ready. Refresh page.'; msg.className = 'auth-msg err'; return; }
+  btn.disabled = true; btn.textContent = 'Signing in...';
   try {
-    console.log('[OP] Calling signInWithOtp for:', email);
-    const { error } = await _sbClient.auth.signInWithOtp({ email, options: { emailRedirectTo: window.location.origin } });
-    if (error) throw error;
-    msg.textContent = 'Magic link sent! Check your email.';
+    var result = await _sbClient.auth.signInWithPassword({ email: email, password: password });
+    if (result.error) throw result.error;
+    // onAuthStateChange handles the rest
+  } catch(e) {
+    var errMsg = e.message || 'Sign in failed.';
+    if (errMsg.toLowerCase().includes('invalid') || errMsg.toLowerCase().includes('credentials')) {
+      errMsg = 'Incorrect email or password.';
+    } else if (errMsg.toLowerCase().includes('confirm')) {
+      errMsg = 'Please confirm your email first. Check your inbox.';
+    }
+    msg.textContent = errMsg;
+    msg.className = 'auth-msg err';
+    btn.disabled = false; btn.textContent = 'Sign In';
+  }
+});
+
+document.getElementById('login-password').addEventListener('keydown', function(e) {
+  if (e.key === 'Enter') document.getElementById('login-btn').click();
+});
+document.getElementById('login-email').addEventListener('keydown', function(e) {
+  if (e.key === 'Enter') document.getElementById('login-password').focus();
+});
+
+// ── SIGNUP ────────────────────────────────────────────────────
+document.getElementById('signup-btn').addEventListener('click', async function() {
+  var email    = document.getElementById('signup-email').value.trim();
+  var password = document.getElementById('signup-password').value;
+  var confirm  = document.getElementById('signup-confirm').value;
+  var msg = document.getElementById('signup-msg');
+  var btn = document.getElementById('signup-btn');
+  msg.textContent = ''; msg.className = 'auth-msg';
+  if (!email || !email.includes('@')) { msg.textContent = 'Enter a valid email.'; msg.className = 'auth-msg err'; return; }
+  if (password.length < 6) { msg.textContent = 'Password must be at least 6 characters.'; msg.className = 'auth-msg err'; return; }
+  if (password !== confirm) { msg.textContent = 'Passwords do not match.'; msg.className = 'auth-msg err'; return; }
+  if (!_sbClient) { msg.textContent = 'Auth not ready. Refresh page.'; msg.className = 'auth-msg err'; return; }
+  btn.disabled = true; btn.textContent = 'Creating account...';
+  try {
+    var result = await _sbClient.auth.signUp({
+      email: email,
+      password: password,
+      options: { emailRedirectTo: window.location.origin }
+    });
+    if (result.error) throw result.error;
+    // If user already exists, Supabase returns a user but with no session
+    if (result.data && result.data.user && !result.data.session) {
+      showConfirmNotice(email);
+    } else if (result.data && result.data.session) {
+      // Auto-confirmed (email confirmation disabled in Supabase settings)
+      currentUser = result.data.session.user;
+      showApp();
+    } else {
+      showConfirmNotice(email);
+    }
+  } catch(e) {
+    var errMsg = e.message || 'Sign up failed.';
+    if (errMsg.toLowerCase().includes('already')) {
+      errMsg = 'An account with this email already exists. Try signing in.';
+    }
+    msg.textContent = errMsg;
+    msg.className = 'auth-msg err';
+    btn.disabled = false; btn.textContent = 'Create Account';
+  }
+});
+
+document.getElementById('signup-confirm').addEventListener('keydown', function(e) {
+  if (e.key === 'Enter') document.getElementById('signup-btn').click();
+});
+
+// ── FORGOT PASSWORD ───────────────────────────────────────────
+document.getElementById('forgot-btn').addEventListener('click', async function() {
+  var email = document.getElementById('forgot-email').value.trim();
+  var msg = document.getElementById('forgot-msg');
+  var btn = document.getElementById('forgot-btn');
+  msg.textContent = ''; msg.className = 'auth-msg';
+  if (!email || !email.includes('@')) { msg.textContent = 'Enter your email.'; msg.className = 'auth-msg err'; return; }
+  if (!_sbClient) { msg.textContent = 'Auth not ready. Refresh page.'; msg.className = 'auth-msg err'; return; }
+  btn.disabled = true; btn.textContent = 'Sending...';
+  try {
+    var result = await _sbClient.auth.resetPasswordForEmail(email, {
+      redirectTo: window.location.origin + '?reset=true'
+    });
+    if (result.error) throw result.error;
+    msg.textContent = 'Reset link sent! Check your email.';
     msg.className = 'auth-msg ok';
     btn.textContent = 'Sent!';
   } catch(e) {
-    msg.textContent = 'Error: ' + (e.message || 'Try again.');
+    msg.textContent = e.message || 'Could not send reset email.';
     msg.className = 'auth-msg err';
-    btn.disabled = false; btn.textContent = 'Send Magic Link';
+    btn.disabled = false; btn.textContent = 'Send Reset Link';
   }
 });
-document.getElementById('auth-email').addEventListener('keydown', e => { if (e.key === 'Enter') document.getElementById('auth-btn').click(); });
+
+document.getElementById('forgot-email').addEventListener('keydown', function(e) {
+  if (e.key === 'Enter') document.getElementById('forgot-btn').click();
+});
 
 // ============================================================
 // APP CONFIG
