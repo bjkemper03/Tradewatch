@@ -1,157 +1,169 @@
 // =============================================================================
-// tradeCalc.js -- Options math, collateral, breakeven calculations
+// js/tradeCalc.js -- Trade math: parsing, collateral, breakeven, BWB
+// Loaded by index.html as a plain script -- all functions are global.
+// No imports/exports. Depends on: STRAT_GROUPS (from index.html state)
 // =============================================================================
 
-function safeNum(v, fallback = 0) {
-  const n = parseFloat(v);
-  return Number.isFinite(n) ? n : fallback;
+// ---------------------------------------------------------------------------
+// Date and number utilities
+// ---------------------------------------------------------------------------
+function safeNum(v, fb) {
+  if (fb === undefined) fb = 0;
+  var n = parseFloat(v);
+  return Number.isFinite(n) ? n : fb;
 }
 
-// Parse expiration: accepts 5/10/26, 6/1/2026, 05/10/2026
 function parseExp(str) {
   if (!str) return null;
-  const s = str.trim().replace(/-/g, '/');
-  const p = s.split('/');
+  var s = str.trim().replace(/-/g, '/');
+  var p = s.split('/');
   if (p.length !== 3) return null;
-  let [m, d, y] = p;
+  var m = p[0], d = p[1], y = p[2];
   if (y.length === 2) y = '20' + y;
-  const dt = new Date(`${y}-${m.padStart(2,'0')}-${d.padStart(2,'0')}T16:00:00`);
+  if (m.length < 2) m = m.padStart(2, '0');
+  if (d.length < 2) d = d.padStart(2, '0');
+  var dt = new Date(y + '-' + m + '-' + d + 'T16:00:00');
   return isNaN(dt.getTime()) ? null : dt;
 }
 
 function calcDTE(expStr) {
-  const d = parseExp(expStr);
+  var d = parseExp(expStr);
   if (!d) return null;
   return Math.ceil((d - new Date()) / 86400000);
 }
 
-function isDebitStrategy(strat) {
-  return (STRAT_GROUPS.DEBIT || []).includes(strat);
+function isDebitStrat(s) {
+  // Falls back gracefully if STRAT_GROUPS not yet defined
+  if (typeof STRAT_GROUPS !== 'undefined' && STRAT_GROUPS.DEBIT) {
+    return STRAT_GROUPS.DEBIT.includes(s);
+  }
+  return ['PUT DEBIT SPREAD','CALL DEBIT SPREAD','LONG PUT','LONG CALL',
+          'PUT BUTTERFLY','CALL BUTTERFLY','IRON BUTTERFLY'].includes(s);
 }
 
 // ---------------------------------------------------------------------------
-// BWB / Complex structure math
+// Black-Scholes helpers (frontend fallback when Tradier Greeks unavailable)
 // ---------------------------------------------------------------------------
-function calcBWBMaxLoss(legs, credit) {
-  const cr    = safeNum(credit);
-  const buys  = legs.filter(l => l.a === 'BUY').map(l => safeNum(l.s)).filter(s => s > 0).sort((a, b) => b - a);
-  const sells = legs.filter(l => l.a === 'SELL').map(l => safeNum(l.s)).filter(s => s > 0);
+function ncdf(x) {
+  var a = [0.254829592, -0.284496736, 1.421413741, -1.453152027, 1.061405429];
+  var p = 0.3275911;
+  var sgn = x < 0 ? -1 : 1;
+  x = Math.abs(x) / Math.sqrt(2);
+  var t2 = 1 / (1 + p * x);
+  var y = 1 - (((((a[4]*t2+a[3])*t2+a[2])*t2+a[1])*t2+a[0])*t2*Math.exp(-x*x));
+  return 0.5 * (1 + sgn * y);
+}
+
+function bsDelta(S, K, T, sig, type) {
+  if (type === undefined) type = 'put';
+  if (!S || !K || !T || !sig || T <= 0 || sig <= 0) return null;
+  var d1 = (Math.log(S / K) + 0.5 * sig * sig * T) / (sig * Math.sqrt(T));
+  return type === 'call' ? ncdf(d1) : ncdf(d1) - 1;
+}
+
+// ---------------------------------------------------------------------------
+// BWB / Butterfly max loss calculation
+// ---------------------------------------------------------------------------
+function calcBWBMaxLoss(legs, cr) {
+  var buys  = legs.filter(function(l) { return l.a === 'BUY'; })
+                  .map(function(l) { return safeNum(l.s); })
+                  .filter(function(s) { return s > 0; })
+                  .sort(function(a, b) { return b - a; });
+  var sells = legs.filter(function(l) { return l.a === 'SELL'; })
+                  .map(function(l) { return safeNum(l.s); })
+                  .filter(function(s) { return s > 0; });
+
   if (buys.length < 2 || sells.length < 1) return null;
 
-  const topLong    = buys[0];
-  const bottomLong = buys[buys.length - 1];
-  const short      = sells[0];
+  var topLong    = buys[0];
+  var bottomLong = buys[buys.length - 1];
+  var short      = sells[0];
+
   if (!(topLong > short && short > bottomLong)) return null;
 
-  const contracts = legs.find(l => l.a === 'SELL')?.n || 1;
-  const upper     = topLong - short;
-  const lower     = short - bottomLong;
+  var sellLeg   = legs.find(function(l) { return l.a === 'SELL'; });
+  var contracts = sellLeg ? (sellLeg.n || 1) : 1;
+  var credit    = safeNum(cr);
+  var upper     = topLong - short;
+  var lower     = short - bottomLong;
+
   if (upper <= 0 || lower <= 0) return null;
 
-  const rawLoss = (lower - upper) * 100 * contracts - (cr * 100 * contracts);
-  return { maxLoss: Math.max(0, rawLoss), upper, lower, topLong, short, bottomLong, contracts };
+  var rawLoss = (lower - upper) * 100 * contracts - (credit * 100 * contracts);
+  return {
+    maxLoss:    Math.max(0, rawLoss),
+    upper:      upper,
+    lower:      lower,
+    topLong:    topLong,
+    short:      short,
+    bottomLong: bottomLong,
+    contracts:  contracts,
+  };
 }
 
-function calcBWBBreakeven(legs, credit) {
-  const sells = legs.filter(l => l.a === 'SELL');
-  if (!sells.length) return null;
-  const s = safeNum(sells[0].s);
-  const c = safeNum(credit);
-  return s && c ? parseFloat((s - c).toFixed(2)) : null;
+function calcBWBBreakeven(legs, cr) {
+  var sellLeg = legs.find(function(l) { return l.a === 'SELL'; });
+  if (!sellLeg) return null;
+  var s = safeNum(sellLeg.s);
+  var c = safeNum(cr);
+  return (s && c) ? parseFloat((s - c).toFixed(2)) : null;
 }
 
 // ---------------------------------------------------------------------------
-// Collateral calculation by strategy
+// Collateral calculation -- strategy-aware
 // ---------------------------------------------------------------------------
-function calcCollateral(strategy, legs, credit) {
-  const cr        = safeNum(credit);
-  const sells     = legs.filter(l => l.a === 'SELL');
-  const buys      = legs.filter(l => l.a === 'BUY');
-  const contracts = Math.max(...[...sells, ...buys].map(l => l.n || 1), 1);
-  const allStrikes = [...sells, ...buys].map(l => safeNum(l.s));
-  if (allStrikes.some(s => s <= 0)) return 0;
+function calcCollateral(strat, legs, cr) {
+  var sells  = legs.filter(function(l) { return l.a === 'SELL'; });
+  var buys   = legs.filter(function(l) { return l.a === 'BUY'; });
+  var allLegs = sells.concat(buys);
+  var contracts = allLegs.length
+    ? Math.max.apply(null, allLegs.map(function(l) { return l.n || 1; }).concat([1]))
+    : 1;
+  var credit = safeNum(cr);
+  var allStrikes = sells.concat(buys).map(function(l) { return safeNum(l.s); });
 
-  if (strategy === 'CASH SECURED PUT') {
-    return safeNum(sells[0]?.s) * 100;
+  if (allStrikes.some(function(s) { return s <= 0; })) return 0;
+
+  if (strat === 'CASH SECURED PUT') {
+    return safeNum(sells[0] && sells[0].s) * 100;
   }
-  if (strategy === 'COVERED CALL') {
-    return 0;
+  if (strat === 'COVERED CALL') {
+    return 0; // collateral is shares already owned
   }
-  if (['PUT BUTTERFLY', 'CALL BUTTERFLY', 'PUT RATIO SPREAD', 'CALL RATIO SPREAD'].includes(strategy)) {
-    const b = calcBWBMaxLoss(legs, cr);
-    return b && b.maxLoss > 0 ? b.maxLoss : 0;
+  if (['PUT BUTTERFLY','CALL BUTTERFLY','PUT RATIO SPREAD','CALL RATIO SPREAD'].includes(strat)) {
+    var b = calcBWBMaxLoss(legs, cr);
+    return (b && b.maxLoss > 0) ? b.maxLoss : 0;
   }
-  if (strategy === 'IRON CONDOR' || strategy === 'IRON BUTTERFLY') {
-    const puts  = legs.filter(l => l.t === 'PUT');
-    const calls = legs.filter(l => l.t === 'CALL');
-    const putW  = puts.filter(l => l.a === 'SELL')[0] && puts.filter(l => l.a === 'BUY')[0]
-      ? Math.abs(safeNum(puts.find(l => l.a === 'SELL').s) - safeNum(puts.find(l => l.a === 'BUY').s))
-      : 0;
-    const callW = calls.filter(l => l.a === 'SELL')[0] && calls.filter(l => l.a === 'BUY')[0]
-      ? Math.abs(safeNum(calls.find(l => l.a === 'SELL').s) - safeNum(calls.find(l => l.a === 'BUY').s))
-      : 0;
-    const maxW = Math.max(putW, callW);
-    return maxW > 0 ? Math.max(0, (maxW - cr) * 100 * contracts) : 0;
+  if (strat === 'IRON CONDOR' || strat === 'IRON BUTTERFLY') {
+    var puts      = legs.filter(function(l) { return l.t === 'PUT'; });
+    var calls     = legs.filter(function(l) { return l.t === 'CALL'; });
+    var putSell   = puts.find(function(l)  { return l.a === 'SELL'; });
+    var putBuy    = puts.find(function(l)  { return l.a === 'BUY'; });
+    var callSell  = calls.find(function(l) { return l.a === 'SELL'; });
+    var callBuy   = calls.find(function(l) { return l.a === 'BUY'; });
+    var putW  = (putSell  && putBuy)  ? Math.abs(safeNum(putSell.s)  - safeNum(putBuy.s))  : 0;
+    var callW = (callSell && callBuy) ? Math.abs(safeNum(callSell.s) - safeNum(callBuy.s)) : 0;
+    var maxW  = Math.max(putW, callW);
+    return maxW > 0 ? Math.max(0, (maxW - credit) * 100 * contracts) : 0;
   }
-  if (['LONG PUT', 'LONG CALL'].includes(strategy)) {
-    return cr * 100 * contracts;
+  if (strat === 'LONG PUT' || strat === 'LONG CALL') {
+    return credit * 100 * contracts;
   }
+  // Default: vertical spread
   if (sells.length > 0 && buys.length > 0) {
-    const w = Math.abs(safeNum(sells[0]?.s) - safeNum(buys[0]?.s));
+    var w = Math.abs(safeNum(sells[0] && sells[0].s) - safeNum(buys[0] && buys[0].s));
     if (w <= 0) return 0;
-    return Math.max(0, (w - cr) * 100 * contracts);
+    return Math.max(0, (w - credit) * 100 * contracts);
   }
   return 0;
 }
 
 // ---------------------------------------------------------------------------
-// Dynamic calendar events (algorithmically generated)
+// Cushion color helper
 // ---------------------------------------------------------------------------
-function buildCalendarEvents() {
-  const today = new Date();
-  const y     = today.getFullYear();
-  const events = [];
-
-  // FOMC -- 8 per year
-  const fomcDates = [
-    new Date(y,0,28), new Date(y,2,18), new Date(y,4,6),  new Date(y,5,17),
-    new Date(y,6,29), new Date(y,8,16), new Date(y,10,4), new Date(y,11,16),
-  ];
-  fomcDates.forEach(d => {
-    if (d >= new Date(today.getFullYear(), today.getMonth() - 1, 1))
-      events.push({ d, name: 'FOMC Meeting', sector: 'ALL', impact: 'HIGH',
-        note: 'Fed rate decision. Even if unchanged, press conference tone moves markets. VIX typically spikes. Avoid opening new positions within 48hrs of this.' });
-  });
-
-  // OPEX -- 3rd Friday of every month
-  for (let m = 0; m < 12; m++) {
-    const d = new Date(y, m, 1);
-    let fridays = 0;
-    while (fridays < 3) { if (d.getDay() === 5) fridays++; if (fridays < 3) d.setDate(d.getDate() + 1); }
-    if (d >= today)
-      events.push({ d: new Date(d), name: 'Monthly OPEX', sector: 'ALL', impact: 'MED',
-        note: 'Options expiration. Unusual price action near popular strikes is common. Pin risk on short strikes close to the money.' });
-  }
-
-  // CPI -- approximately 2nd Wednesday of each month
-  for (let m = 0; m < 12; m++) {
-    const d = new Date(y, m, 1);
-    let weds = 0;
-    while (weds < 2) { if (d.getDay() === 3) weds++; if (weds < 2) d.setDate(d.getDate() + 1); }
-    d.setDate(d.getDate() + 1);
-    if (d >= today)
-      events.push({ d: new Date(d), name: 'CPI Report', sector: 'ALL', impact: 'HIGH',
-        note: 'Inflation data. Hot CPI = Fed stays hawkish = rate pressure = market selloff. Your biggest macro risk for open spreads on tech names.' });
-  }
-
-  // NFP -- 1st Friday of each month
-  for (let m = 0; m < 12; m++) {
-    const d = new Date(y, m, 1);
-    while (d.getDay() !== 5) d.setDate(d.getDate() + 1);
-    if (d >= today)
-      events.push({ d: new Date(d), name: 'Jobs Report (NFP)', sector: 'ALL', impact: 'HIGH',
-        note: 'Non-farm payrolls. Strong jobs = Fed stays hawkish = potential market pressure. Watch the day before for positioning.' });
-  }
-
-  return events;
+function cushC(p) {
+  var min = (typeof prefs !== 'undefined') ? prefs.cushionMin : 5;
+  if (p >= min + 2) return '#22c55e';
+  if (p >= min)     return '#f59e0b';
+  return '#ef4444';
 }
