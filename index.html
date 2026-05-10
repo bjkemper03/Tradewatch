@@ -6,7 +6,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <title>OptionsPlus</title>
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.6/dist/umd/supabase.min.js"></script>
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap');
 :root{
@@ -273,23 +273,31 @@ select{appearance:none;cursor:pointer}
 // ============================================================
 const SUPA_URL = 'https://mvohmjzwdvjilvljbivg.supabase.co';
 const SUPA_KEY = 'sb_publishable_yqEE2eE9r2iTOnzh43nA5A_hJLnxYeT';
-const _sbClient = window.supabase.createClient(SUPA_URL, SUPA_KEY);
+let _sbClient = null;
 let currentUser = null;
+try {
+  _sbClient = window.supabase.createClient(SUPA_URL, SUPA_KEY);
+  console.log('[OP] Supabase client initialized');
+} catch(e) {
+  console.error('[OP] Supabase init failed:', e);
+  document.getElementById('auth-msg').textContent = 'Init error: ' + e.message;
+  document.getElementById('auth-msg').className = 'auth-msg err';
+}
 
 // Auth boot
 (async function bootAuth() {
   const { data: { session } } = await _sbClient.auth.getSession();
-  if (session?.user) {
+  if (session && session.user) {
     currentUser = session.user;
     showApp();
   } else {
     showAuthScreen();
   }
   _sbClient.auth.onAuthStateChange((_e, session) => {
-    if (session?.user && !currentUser) {
+    if (session && session.user && !currentUser) {
       currentUser = session.user;
       showApp();
-    } else if (!session?.user && currentUser) {
+    } else if (!session && currentUser) {
       currentUser = null;
       showAuthScreen();
     }
@@ -312,13 +320,16 @@ async function doSignOut() {
 }
 
 document.getElementById('auth-btn').addEventListener('click', async function() {
+  console.log('[OP] Auth button clicked');
   const email = document.getElementById('auth-email').value.trim();
   const msg = document.getElementById('auth-msg');
   const btn = document.getElementById('auth-btn');
   if (!email || !email.includes('@')) { msg.textContent = 'Enter a valid email.'; msg.className = 'auth-msg err'; return; }
+  if (!_sbClient) { msg.textContent = 'Auth not initialized. Refresh page.'; msg.className = 'auth-msg err'; return; }
   btn.disabled = true; btn.textContent = 'Sending...';
   msg.textContent = ''; msg.className = 'auth-msg';
   try {
+    console.log('[OP] Calling signInWithOtp for:', email);
     const { error } = await _sbClient.auth.signInWithOtp({ email, options: { emailRedirectTo: window.location.origin } });
     if (error) throw error;
     msg.textContent = 'Magic link sent! Check your email.';
@@ -493,7 +504,7 @@ function calcBWBMaxLoss(legs,cr){
   if(buys.length<2||sells.length<1)return null;
   const topLong=buys[0],bottomLong=buys[buys.length-1],short=sells[0];
   if(!(topLong>short&&short>bottomLong))return null;
-  const contracts=legs.find(l=>l.a==='SELL')?.n||1;
+  const contracts=legs.find(function(l){return l.a==='SELL'}) && legs.find(function(l){return l.a==='SELL'}).n||1;
   const credit=safeNum(cr);
   const upper=topLong-short,lower=short-bottomLong;
   if(upper<=0||lower<=0)return null;
@@ -507,7 +518,7 @@ function calcCollateral(strat,legs,cr){
   const credit=safeNum(cr);
   const allStrikes=[...sells,...buys].map(l=>safeNum(l.s));
   if(allStrikes.some(s=>s<=0))return 0;
-  if(strat==='CASH SECURED PUT')return safeNum(sells[0]?.s)*100;
+  if(strat==='CASH SECURED PUT')return safeNum(sells[0] && sells[0].s)*100;
   if(strat==='COVERED CALL')return 0;
   if(['PUT BUTTERFLY','CALL BUTTERFLY','PUT RATIO SPREAD','CALL RATIO SPREAD'].includes(strat)){
     const b=calcBWBMaxLoss(legs,cr);return(b&&b.maxLoss>0)?b.maxLoss:0;
@@ -523,7 +534,7 @@ function calcCollateral(strat,legs,cr){
   }
   if(['LONG PUT','LONG CALL'].includes(strat))return credit*100*contracts;
   if(sells.length>0&&buys.length>0){
-    const w=Math.abs(safeNum(sells[0]?.s)-safeNum(buys[0]?.s));
+    const w=Math.abs(safeNum(sells[0] && sells[0].s)-safeNum(buys[0] && buys[0].s));
     if(w<=0)return 0;
     return Math.max(0,(w-credit)*100*contracts);
   }
@@ -631,9 +642,9 @@ function buildCalendarEvents(){
 // ============================================================
 function buildGuidance(sig,vix,spy,creditChg,fg,rspDiff){
   const s=prefs.cushionMin+'%';
-  if(sig==='GREEN')return(vix?.ok&&vix?.level?'VIX at '+vix.level+' is '+(vix.level<18?'low -- ideal for premium collection.':'moderate.'):'Market structure constructive.')+' '+(fg?'Fear/Greed at '+fg.score+' ('+fg.rating+').':'')+' '+(spy?.above50&&spy?.above200?'SPY holding above both key MAs.':spy?.above50?'SPY above 50MA.':'SPY below 50MA -- watch.')+' Your '+prefs.dteLow+'-'+prefs.dteHigh+' DTE credit structures are well-positioned. Stick to '+s+' cushion minimum.';
-  if(sig==='YELLOW')return 'Mixed environment. '+(vix?.ok&&vix?.chg>10?'VIX spiked '+vix.chg+'% in 5 days. ':'')+' Size down, close positions below '+s+' cushion, check calendar before new opens.';
-  return 'Elevated risk. '+(vix?.ok&&vix?.level>30?'VIX at '+vix.level+' is high fear. ':'')+' Avoid new positions until conditions normalize.';
+  if(sig==='GREEN')return(vix && vix.ok&&vix && vix.level?'VIX at '+vix.level+' is '+(vix.level<18?'low -- ideal for premium collection.':'moderate.'):'Market structure constructive.')+' '+(fg?'Fear/Greed at '+fg.score+' ('+fg.rating+').':'')+' '+(spy && spy.above50&&spy && spy.above200?'SPY holding above both key MAs.':spy && spy.above50?'SPY above 50MA.':'SPY below 50MA -- watch.')+' Your '+prefs.dteLow+'-'+prefs.dteHigh+' DTE credit structures are well-positioned. Stick to '+s+' cushion minimum.';
+  if(sig==='YELLOW')return 'Mixed environment. '+(vix && vix.ok&&vix && vix.chg>10?'VIX spiked '+vix.chg+'% in 5 days. ':'')+' Size down, close positions below '+s+' cushion, check calendar before new opens.';
+  return 'Elevated risk. '+(vix && vix.ok&&vix && vix.level>30?'VIX at '+vix.level+' is high fear. ':'')+' Avoid new positions until conditions normalize.';
 }
 
 // ============================================================
@@ -677,15 +688,15 @@ function renderOverview(){
       return;
     }
     const{vix,fg,spy,qqq,hyg,rsp}=mkt;
-    const creditChg=hyg?.perf5?-hyg.perf5*2:0;
+    const creditChg=hyg && hyg.perf5?-hyg.perf5*2:0;
     const rspDiff=(rsp&&spy)?parseFloat((rsp.perf5-spy.perf5).toFixed(2)):0;
-    const vs=sVIX(vix?.level,vix?.chg||0);
-    const ss=sStruct(spy?.above50,spy?.above200,qqq?.above50,rspDiff);
+    const vs=sVIX(vix && vix.level,vix && vix.chg||0);
+    const ss=sStruct(spy && spy.above50,spy && spy.above200,qqq && qqq.above50,rspDiff);
     const sent=sSent(fg,creditChg);
     const composite=Math.round(vs*.40+ss*.35+sent*.15+10);
     const sig=getSig(vs,ss,sent);
     const col=sigC(sig);
-    const fgScore=fg?.score||50;
+    const fgScore=fg && fg.score||50;
     const fgCol=fgScore>60?'#22c55e':fgScore<40?'#ef4444':'#f59e0b';
     const sigLabel=sig==='GREEN'?'Trade Normally':sig==='YELLOW'?'Use Caution':'Reduce Exposure';
     const cacheTs=JSON.parse(localStorage.getItem(CK.mkt)||'{}').ts||Date.now();
@@ -707,19 +718,19 @@ function renderOverview(){
         '</div>'+
       '</div>'+
       '<div class="tiles">'+
-        quickTile('VIX',vix?.ok&&vix?.level?vix.level.toFixed(1):'N/A',vix?.ok&&vix?.level?(vix.level<18?'var(--green)':vix.level<26?'var(--yellow)':'var(--red)'):'var(--text3)')+
+        quickTile('VIX',vix && vix.ok&&vix && vix.level?vix.level.toFixed(1):'N/A',vix && vix.ok&&vix && vix.level?(vix.level<18?'var(--green)':vix.level<26?'var(--yellow)':'var(--red)'):'var(--text3)')+
         quickTile('SPY 5D',spy&&spy.perf5!==undefined?(spy.perf5>0?'+':'')+spy.perf5+'%':'N/A',spy&&spy.perf5>0?'var(--green)':spy&&spy.perf5<0?'var(--red)':'var(--text3)')+
-        quickTile('SPY',spy?.price?'$'+spy.price:'N/A','var(--text)')+
+        quickTile('SPY',spy && spy.price?'$'+spy.price:'N/A','var(--text)')+
       '</div>'+
       '<div class="tiles">'+
-        quickTile('SPY 50MA',spy?.above50?'Above':'Below',spy?.above50?'var(--green)':'var(--red)')+
-        quickTile('QQQ 50MA',qqq?.above50?'Above':'Below',qqq?.above50?'var(--green)':'var(--red)')+
+        quickTile('SPY 50MA',spy && spy.above50?'Above':'Below',spy && spy.above50?'var(--green)':'var(--red)')+
+        quickTile('QQQ 50MA',qqq && qqq.above50?'Above':'Below',qqq && qqq.above50?'var(--green)':'var(--red)')+
         quickTile('RSP/SPY',rspDiff?(rspDiff>0?'+':'')+rspDiff+'%':'N/A',rspDiff>0.5?'var(--green)':rspDiff<-1?'var(--red)':'var(--yellow)')+
       '</div>'+
       '<div class="card">'+
         '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">'+
           '<span style="font-size:11px;color:var(--text2);font-weight:500">CNN Fear &amp; Greed</span>'+
-          '<span style="font-family:var(--mono);font-size:13px;font-weight:700;color:'+fgCol+'">'+fgScore+' &mdash; '+(fg?.rating||'N/A')+'</span>'+
+          '<span style="font-family:var(--mono);font-size:13px;font-weight:700;color:'+fgCol+'">'+fgScore+' &mdash; '+(fg && fg.rating||'N/A')+'</span>'+
         '</div>'+
         '<div style="height:5px;background:linear-gradient(to right,#ef4444,#f59e0b,#22c55e);border-radius:3px;position:relative">'+
           '<div style="position:absolute;top:-4px;left:calc('+fgScore+'% - 7px);width:13px;height:13px;border-radius:50%;background:var(--text);border:2px solid var(--bg)"></div>'+
@@ -799,16 +810,16 @@ function azUpdateCol(){
 }
 
 async function runAnalysis(){
-  const ticker=$('az-tk')?.value?.trim()?.toUpperCase();
-  const expRaw=$('az-exp')?.value?.trim();
+  const ticker=($('az-tk') ? $('az-tk').value.trim().toUpperCase() : '');
+  const expRaw=($('az-exp') ? $('az-exp').value.trim() : '');
   const credit=safeNum($('az-cr')?.value);
   if(!ticker){alert('Enter a ticker symbol');return;}
   const btn=$('az-btn');btn.disabled=true;btn.textContent='FETCHING DATA...';
   $('az-result').innerHTML=spinHtml('PULLING '+ticker+'...');
   try{
     const shortLeg=azLegData.find(l=>l.a==='SELL');
-    const shortStrike=safeNum(shortLeg?.s);
-    const optType=(shortLeg?.t||'PUT').toLowerCase();
+    const shortStrike=safeNum(shortLeg && shortLeg.s);
+    const optType=(shortLeg && shortLeg.t||'PUT').toLowerCase();
     const expDate=parseExp(expRaw);
     const dte=expDate?Math.ceil((expDate-new Date())/86400000):null;
     const isDebit=isDebitStrat(azStrat);
@@ -824,12 +835,12 @@ async function runAnalysis(){
       const ad=await ar.json();
       if(ad.ok)analysisData=ad;
     }catch(e){console.warn('Full analysis failed, using quote only:',e);}
-    const price=analysisData?.price||quoteData?.price||0;
-    const hv30=(analysisData?.hv30||30)/100;
-    const lastDate=analysisData?.lastDate||quoteData?.date||'';
-    const supBelow=analysisData?.supports||[];
+    const price=analysisData && analysisData.price||quoteData && quoteData.price||0;
+    const hv30=(analysisData && analysisData.hv30||30)/100;
+    const lastDate=analysisData && analysisData.lastDate||quoteData && quoteData.date||'';
+    const supBelow=analysisData && analysisData.supports||[];
     let absDelta=null,deltaSource='BS';
-    if(analysisData?.absDelta){absDelta=analysisData.absDelta;deltaSource=analysisData.deltaSource||'API';}
+    if(analysisData && analysisData.absDelta){absDelta=analysisData.absDelta;deltaSource=analysisData.deltaSource||'API';}
     else if(shortStrike>0&&price>0&&dte){const bd=bsDelta(price,shortStrike,dte/365,hv30,optType);if(bd!==null){absDelta=Math.abs(bd);deltaSource='BS';}}
     const sells=azLegData.filter(l=>l.a==='SELL'),buys=azLegData.filter(l=>l.a==='BUY');
     const spreadWidth=(sells.length>0&&buys.length>0)?Math.abs(safeNum(sells[0].s)-safeNum(buys[0].s)):0;
@@ -874,10 +885,10 @@ async function runAnalysis(){
       html+='<div class="card"><div style="font-size:10px;color:var(--text3);font-weight:600;text-transform:uppercase;letter-spacing:.5px;margin-bottom:10px">KEY LEVELS</div>'+
         '<div style="display:flex;gap:24px;margin-bottom:8px">'+
           '<div><div style="font-size:9px;color:#22c55e;letter-spacing:1px;margin-bottom:6px">SUPPORT</div>'+supBelow.map(p=>'<div style="font-size:16px;font-weight:700;color:#22c55e;font-family:var(--mono)">$'+p+'</div>').join('')+'</div>'+
-          (analysisData?.resistances?.length?'<div><div style="font-size:9px;color:#ef4444;letter-spacing:1px;margin-bottom:6px">RESISTANCE</div>'+analysisData.resistances.map(p=>'<div style="font-size:16px;font-weight:700;color:#ef4444;font-family:var(--mono)">$'+p+'</div>').join('')+'</div>':'')+
+          (analysisData && analysisData.resistances && analysisData.resistances.length?'<div><div style="font-size:9px;color:#ef4444;letter-spacing:1px;margin-bottom:6px">RESISTANCE</div>'+analysisData.resistances.map(p=>'<div style="font-size:16px;font-weight:700;color:#ef4444;font-family:var(--mono)">$'+p+'</div>').join('')+'</div>':'')+
         '</div>'+
         (exitSignal?'<div style="padding:8px 11px;background:rgba(239,68,68,.06);border-radius:7px;font-size:10px;color:#fca5a5;border:1px solid rgba(239,68,68,.15)">&lightning; Exit signal -- Close if '+ticker+' breaks $'+exitSignal+'</div>':'')+
-        (analysisData?.sma20?'<div style="font-size:10px;color:var(--text3);margin-top:8px">SMA20: $'+analysisData.sma20+' &bull; SMA50: $'+analysisData.sma50+'</div>':'')+
+        (analysisData && analysisData.sma20?'<div style="font-size:10px;color:var(--text3);margin-top:8px">SMA20: $'+analysisData.sma20+' &bull; SMA50: $'+analysisData.sma50+'</div>':'')+
       '</div>';
     }
     html+='<div style="padding:0 12px"><button class="btn btn-success btn-w" onclick="logFromAnalysis()">&check; I TOOK THIS TRADE -- LOG IT</button></div>';
@@ -896,12 +907,12 @@ function logFromAnalysis(){
     const f=$('tfm');if(f&&f.style.display==='none'){f.style.display='block';}
     setTimeout(()=>{
       if($('tf-tk'))$('tf-tk').value=azResult.ticker||'';
-      if($('tf-px'))$('tf-px').value=azResult.price?.toFixed(2)||'';
+      if($('tf-px'))$('tf-px').value=azResult.price != null ? azResult.price.toFixed(2) : "";
       if($('tf-exp'))$('tf-exp').value=azResult.exp||'';
-      if($('tf-cr'))$('tf-cr').value=azResult.credit?.toString()||'';
-      if($('tf-col'))$('tf-col').value=azResult.collateral?.toFixed(0)||'';
-      if($('tf-exit'))$('tf-exit').value=azResult.exitSignal?.toString()||'';
-      if($('tf-notes'))$('tf-notes').value='Delta:'+(azResult.absDelta?.toFixed(3)||'?')+'('+azResult.deltaSource+') HV30:'+((azResult.hv30||0)*100).toFixed(1)+'%'+(azResult.earningsRisk?' \u26a0 Earnings:'+azResult.earningsDate:'');
+      if($('tf-cr'))$('tf-cr').value=azResult.credit != null ? azResult.credit.toString() : ""||'';
+      if($('tf-col'))$('tf-col').value=azResult.collateral != null ? azResult.collateral.toFixed(0) : ""||'';
+      if($('tf-exit'))$('tf-exit').value=azResult.exitSignal != null ? azResult.exitSignal.toString() : ""||'';
+      if($('tf-notes'))$('tf-notes').value='Delta:'+(azResult.absDelta != null ? azResult.absDelta.toFixed(3) : '?')+'('+azResult.deltaSource+') HV30:'+((azResult.hv30||0)*100).toFixed(1)+'%'+(azResult.earningsRisk?' \u26a0 Earnings:'+azResult.earningsDate:'');
       buildLegs();
     },80);
   },150);
@@ -969,7 +980,7 @@ function renderTrades(){
     const legs=t.legs||[],dte=t.currentDTE;
     const dteC=dte!==undefined?(dte<=5?'var(--red)':dte<=10?'var(--yellow)':'var(--green)'):'var(--text3)';
     const lp=livePrices[t.ticker];
-    const curPx=lp?.price||safeNum(t.stockAtOpen);
+    const curPx=lp && lp.price||safeNum(t.stockAtOpen);
     const priceLabel=lp?('$'+curPx+' live'):(t.stockAtOpen?'$'+t.stockAtOpen+' open':null);
     const be=safeNum(t.breakeven);
     const liveCushion=curPx>0&&be>0?parseFloat(((curPx-be)/curPx*100).toFixed(1)):safeNum(t.cushionPct);
@@ -1082,21 +1093,21 @@ function toggleTag(i,tag){
   const btn=$('ttag-'+i);if(btn)btn.classList.toggle('on',selectedTags.includes(tag));
 }
 function submitTrade(){
-  const ticker=$('tf-tk')?.value?.trim()?.toUpperCase();
+  const ticker=($('tf-tk') ? $('tf-tk').value.trim().toUpperCase() : '');
   if(!ticker){alert('Enter a ticker');return;}
   const stock=safeNum($('tf-px')?.value);
   const credit=safeNum($('tf-cr')?.value);
   const collateral=safeNum($('tf-col')?.value);
   const expRaw=$('tf-exp')?.value||'';
   const shortLeg=formLegData.find(l=>l.a==='SELL');
-  const strike=safeNum(shortLeg?.s);
+  const strike=safeNum(shortLeg && shortLeg.s);
   const be=strike>0&&credit>0?parseFloat((strike-credit).toFixed(2)):null;
   const cushionVal=stock>0&&be?parseFloat(((stock-be)/stock*100).toFixed(1)):null;
   const dte=calcDTE(expRaw);
   const sector=TICKER_SECTOR[ticker]||null;
   trades.unshift({
     id:Date.now(),ticker,strategy:formStrat,legs:formLegData.map(l=>({...l})),
-    expDate:expRaw,dteOpen:$('tf-dte')?.value||dte?.toString()||'',
+    expDate:expRaw,dteOpen:$('tf-dte')?.value||dte != null ? dte.toString() : ""||'',
     creditReceived:credit.toString(),maxRisk:collateral.toString(),
     stockAtOpen:stock.toString(),exitSignal:$('tf-exit')?.value||'',
     notes:$('tf-notes')?.value||'',openDate:new Date().toISOString().slice(0,10),
@@ -1199,7 +1210,7 @@ async function renderSectors(){
     perf={};
     // Fetch SPY from market data cache first
     const mktCache=gc(CK.mkt,TTL.mkt);
-    perf['SPY']=mktCache?.spy?.perf5??null;
+    perf['SPY']=(mktCache && mktCache.spy && mktCache.spy.perf5) || null;
     for(const s of SEC_META){
       try{
         const r=await fetch(API.quote+'?ticker='+s.sym,{signal:AbortSignal.timeout(8000)});
@@ -1394,7 +1405,7 @@ function renderPrefs(){
       '<div style="font-size:10px;color:var(--text3);font-weight:600;text-transform:uppercase;letter-spacing:.5px;margin-bottom:12px">Account</div>'+
       '<div class="pref-row"><span style="font-size:12px;color:var(--text2)">Display name</span><input type="text" value="'+(prefs.displayName||'')+'" style="width:130px;font-size:12px" onblur="prefs.displayName=this.value;savePrefs()"></div>'+
       '<div class="pref-row"><span style="font-size:12px;color:var(--text2)">Account size $</span><input type="number" value="'+prefs.accountSize+'" style="width:110px;font-family:var(--mono)" onblur="prefs.accountSize=parseInt(this.value)||10000;savePrefs()"></div>'+
-      '<div style="font-size:10px;color:var(--text3);margin-top:6px">Signed in as: '+(currentUser?.email||'unknown')+'</div>'+
+      '<div style="font-size:10px;color:var(--text3);margin-top:6px">Signed in as: '+(currentUser && currentUser.email||'unknown')+'</div>'+
     '</div>'+
     '<div style="padding:0 12px 12px">'+
       '<button class="btn btn-primary btn-w" onclick="savePrefs();toast(\'Preferences saved!\')">Save Preferences</button>'+
