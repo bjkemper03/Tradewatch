@@ -988,90 +988,292 @@ function azUpdateCol(){
 async function runAnalysis(){
   const ticker=($('az-tk') ? $('az-tk').value.trim().toUpperCase() : '');
   const expRaw=($('az-exp') ? $('az-exp').value.trim() : '');
-  const credit=safeNum($('az-cr')?.value);
+  const credit=safeNum($('az-cr') ? $('az-cr').value : 0);
   if(!ticker){alert('Enter a ticker symbol');return;}
   const btn=$('az-btn');btn.disabled=true;btn.textContent='FETCHING DATA...';
   $('az-result').innerHTML=spinHtml('PULLING '+ticker+'...');
   try{
-    const shortLeg=azLegData.find(l=>l.a==='SELL');
-    const shortStrike=safeNum(shortLeg && shortLeg.s);
-    const optType=(shortLeg && shortLeg.t||'PUT').toLowerCase();
-    const expDate=parseExp(expRaw);
-    const dte=expDate?Math.ceil((expDate-new Date())/86400000):null;
-    const isDebit=isDebitStrat(azStrat);
-    const [quoteData,earnings]=await Promise.all([fetchQuote(ticker),fetchEarningsData(ticker)]);
-    // Also fetch full analysis from backend
-    let analysisData=null;
-    try{
-      const ar=await fetch(API.analyze,{
-        method:'POST',headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({ticker,legs:azLegData,expDate:expRaw,credit,strategy:azStrat}),
-        signal:AbortSignal.timeout(20000)
-      });
-      const ad=await ar.json();
-      if(ad.ok)analysisData=ad;
-    }catch(e){console.warn('Full analysis failed, using quote only:',e);}
-    const price=analysisData && analysisData.price||quoteData && quoteData.price||0;
-    const hv30=(analysisData && analysisData.hv30||30)/100;
-    const lastDate=analysisData && analysisData.lastDate||quoteData && quoteData.date||'';
-    const supBelow=analysisData && analysisData.supports||[];
-    let absDelta=null,deltaSource='BS';
-    if(analysisData && analysisData.absDelta){absDelta=analysisData.absDelta;deltaSource=analysisData.deltaSource||'API';}
-    else if(shortStrike>0&&price>0&&dte){const bd=bsDelta(price,shortStrike,dte/365,hv30,optType);if(bd!==null){absDelta=Math.abs(bd);deltaSource='BS';}}
-    const sells=azLegData.filter(l=>l.a==='SELL'),buys=azLegData.filter(l=>l.a==='BUY');
-    const spreadWidth=(sells.length>0&&buys.length>0)?Math.abs(safeNum(sells[0].s)-safeNum(buys[0].s)):0;
-    const crWidthPct=(spreadWidth>0&&credit>0)?parseFloat((credit/spreadWidth*100).toFixed(1)):null;
-    const cushionPct=price>0&&shortStrike>0?parseFloat(((price-shortStrike)/price*100).toFixed(1)):null;
-    let earningsRisk=false,earningsDate=null;
-    if(earnings){earningsDate=earnings.date;if(expDate){const ed=new Date(earnings.date+'T12:00:00');if(ed<=expDate)earningsRisk=true;}else earningsRisk=true;}
-    const aboveSupport=shortStrike>0&&supBelow.length>0&&shortStrike>supBelow[0];
-    const exitSignal=supBelow.length>0?supBelow[0]:null;
-    let signal='GO';const reasons=[];
-    if(earningsRisk){signal='NO-GO';reasons.push('Earnings '+earningsDate+' within expiration window');}
-    if(!isDebit&&cushionPct!==null&&cushionPct<prefs.cushionMin){signal='NO-GO';reasons.push(cushionPct+'% cushion below your '+prefs.cushionMin+'% minimum');}
-    if(absDelta&&absDelta>prefs.deltaHigh){signal=signal==='GO'?'CAUTION':signal;reasons.push('Delta ~'+absDelta.toFixed(3)+' above your '+prefs.deltaHigh+' target');}
-    if(!isDebit&&crWidthPct!==null&&crWidthPct<prefs.creditWidthMin){signal=signal==='GO'?'CAUTION':signal;reasons.push('Credit is only '+crWidthPct+'% of spread width');}
-    if(reasons.length===0)reasons.push('All checks passed -- structure looks solid');
-    const isBWBlike=['PUT BUTTERFLY','CALL BUTTERFLY','PUT RATIO SPREAD','CALL RATIO SPREAD'].includes(azStrat);
-    const bwbScore=isBWBlike?scoreBWB(azLegData,credit,price,dte,earningsRisk):null;
-    const bwbInfo=isBWBlike?calcBWBMaxLoss(azLegData,credit):null;
-    const be=isBWBlike?(legs=>legs.find(l=>l.a==='SELL')?safeNum(legs.find(l=>l.a==='SELL').s)-credit:null)(azLegData):(shortStrike>0&&credit>0?parseFloat((shortStrike-credit).toFixed(2)):null);
-    const beCushion=price>0&&be?parseFloat(((price-be)/price*100).toFixed(1)):null;
-    const em=(price&&hv30&&dte)?parseFloat((price*hv30*Math.sqrt(dte/365)).toFixed(2)):null;
-    const strikeOutsideEM=em&&shortStrike>0&&price>0?(price-shortStrike)>em:null;
-    azResult={ticker,strategy:azStrat,legs:azLegData.map(l=>({...l})),shortStrike,exp:expRaw,price,lastDate,credit,collateral:calcCollateral(azStrat,azLegData,credit),cushionPct,beCushion,breakeven:be,absDelta,deltaSource,hv30,dte,supports:supBelow,exitSignal,earningsRisk,earningsDate,signal,bwbScore,bwbInfo,crWidthPct,isDebit,em};
-    const sc3=signal==='GO'?'#22c55e':signal==='CAUTION'?'#f59e0b':'#ef4444';
-    let html='<div style="display:flex;align-items:center;gap:12px;padding:14px;background:'+sc3+'08;border:1px solid '+sc3+'25;border-radius:10px;margin:0 12px 10px">'+
-      '<div style="width:48px;height:48px;border-radius:50%;background:'+sc3+';color:#080c18;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:9px;letter-spacing:1px;flex-shrink:0">'+signal+'</div>'+
-      '<div><div style="font-weight:700;font-size:15px;color:'+sc3+'">'+ticker+' &mdash; '+azStrat+'</div>'+
-      '<div style="font-size:11px;color:var(--text2);margin-top:3px;line-height:1.5">'+reasons.join('. ')+'.</div>'+
-      (lastDate?'<div style="font-size:9px;color:var(--text3);margin-top:3px">Price as of '+lastDate+'</div>':'')+
-      '</div></div>';
-    html+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:0 12px 10px">'+
-      mc2('DELTA',absDelta!==null?absDelta.toFixed(3):'N/A',absDelta?(absDelta<=prefs.deltaHigh?'#22c55e':absDelta<=prefs.deltaHigh+.05?'#f59e0b':'#ef4444'):'var(--text3)')+
-      mc2(isDebit?'BREAKEVEN':'CUSHION',isDebit?(be?'$'+be:'N/A'):(cushionPct!==null?cushionPct+'%':'N/A'),cushionPct!==null?cushC(cushionPct):'var(--text3)')+
-      mc2('LIVE PRICE',price?'$'+price:'N/A','var(--text)')+
-      mc2('DTE',dte!==null?dte+'d':'N/A',dte&&dte>=prefs.dteLow&&dte<=prefs.dteHigh?'#22c55e':dte&&dte<prefs.dteLow?'#f59e0b':'var(--text3)')+
-      mc2('HV30',(hv30*100).toFixed(1)+'%','var(--text3)')+
-      mc2('EXP MOVE',em?'$'+em:'N/A',em?'#f59e0b':'var(--text3)')+
-      (crWidthPct!==null?mc2('CREDIT/WIDTH',crWidthPct+'%',crWidthPct>=prefs.creditWidthMin?'#22c55e':crWidthPct>=prefs.creditWidthMin/2?'#f59e0b':'#ef4444'):'')+
-      mc2('EARNINGS',earningsRisk?'\u26a0 '+earningsDate:(earningsDate?'\u2713 '+earningsDate:'\u2713 CLEAR'),earningsRisk?'#ef4444':'#22c55e')+
-    '</div>';
-    if(supBelow.length>0){
-      html+='<div class="card"><div style="font-size:10px;color:var(--text3);font-weight:600;text-transform:uppercase;letter-spacing:.5px;margin-bottom:10px">KEY LEVELS</div>'+
-        '<div style="display:flex;gap:24px;margin-bottom:8px">'+
-          '<div><div style="font-size:9px;color:#22c55e;letter-spacing:1px;margin-bottom:6px">SUPPORT</div>'+supBelow.map(p=>'<div style="font-size:16px;font-weight:700;color:#22c55e;font-family:var(--mono)">$'+p+'</div>').join('')+'</div>'+
-          (analysisData && analysisData.resistances && analysisData.resistances.length?'<div><div style="font-size:9px;color:#ef4444;letter-spacing:1px;margin-bottom:6px">RESISTANCE</div>'+analysisData.resistances.map(p=>'<div style="font-size:16px;font-weight:700;color:#ef4444;font-family:var(--mono)">$'+p+'</div>').join('')+'</div>':'')+
-        '</div>'+
-        (exitSignal?'<div style="padding:8px 11px;background:rgba(239,68,68,.06);border-radius:7px;font-size:10px;color:#fca5a5;border:1px solid rgba(239,68,68,.15)">&lightning; Exit signal -- Close if '+ticker+' breaks $'+exitSignal+'</div>':'')+
-        (analysisData && analysisData.sma20?'<div style="font-size:10px;color:var(--text3);margin-top:8px">SMA20: $'+analysisData.sma20+' &bull; SMA50: $'+analysisData.sma50+'</div>':'')+
+    // Send everything to the new backend -- it handles all strategy logic
+    const res=await fetch(API.analyze,{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({
+        ticker,
+        legs:azLegData,
+        expDate:expRaw,
+        credit,
+        strategy:azStrat,
+        prefs:{
+          cushionMin:prefs.cushionMin,
+          dteLow:prefs.dteLow,
+          dteHigh:prefs.dteHigh,
+          deltaLow:prefs.deltaLow,
+          deltaHigh:prefs.deltaHigh,
+          creditWidthMin:prefs.creditWidthMin
+        }
+      }),
+      signal:AbortSignal.timeout(25000)
+    });
+    const d=await res.json();
+    if(!d.ok){
+      $('az-result').innerHTML='<div style="padding:14px 16px;color:var(--red);font-size:12px;background:var(--red-dim);border-radius:10px;margin:0 12px">'+
+        '<strong>Analysis Error:</strong> '+(d.error||'Unknown error')+'</div>';
+      return;
+    }
+
+    // Store result for log-from-analysis feature
+    azResult={
+      ticker:d.ticker,
+      strategy:d.strategy,
+      strategyGroup:d.strategyGroup,
+      legs:azLegData.map(l=>({...l})),
+      exp:expRaw,
+      price:d.price,
+      lastDate:d.lastDate,
+      credit:credit,
+      collateral:d.collateral||calcCollateral(azStrat,azLegData,credit),
+      breakeven:d.breakeven||null,
+      cushionPct:d.cushionPct||null,
+      absDelta:d.absDelta||null,
+      deltaSource:d.deltaSource||'BS',
+      hv30:d.hv30||null,
+      dte:d.dte||null,
+      supports:d.supports||[],
+      exitSignal:d.exitSignal||null,
+      earningsRisk:d.earningsRisk||false,
+      earningsDate:d.earningsDate||null,
+      signal:d.signal||'GO',
+      em:d.em||null,
+      // Strategy-specific
+      wheelScenarios:d.wheelScenarios||null,
+      probWorthless:d.probWorthless||null,
+      profitTargets:d.profitTargets||null,
+      issues:d.issues||[]
+    };
+
+    renderAnalysisResult(d);
+
+  }catch(e){
+    console.error('Analysis error:',e);
+    $('az-result').innerHTML='<div style="padding:14px;color:var(--red);font-size:11px">Fetch failed: '+e.message+'</div>';
+  }finally{
+    btn.disabled=false;
+    btn.innerHTML='&rarr; Analyze Trade';
+  }
+}
+
+function renderAnalysisResult(d){
+  const sig=d.signal||'GO';
+  const sc=sig==='GO'?'#22c55e':sig==='CAUTION'?'#f59e0b':'#ef4444';
+  const sigLabel=sig==='GO'?'GO':'NO-GO'===sig?'NO-GO':'CAUTION';
+  const issues=d.issues||[];
+  const reasons=issues.length?issues.map(i=>i.msg):['All checks passed -- structure looks solid'];
+
+  // ── Signal hero ──────────────────────────────────────────────────────────
+  let html='<div style="display:flex;align-items:center;gap:12px;padding:14px;background:'+sc+'08;border:1px solid '+sc+'25;border-radius:10px;margin:0 12px 10px">'+
+    '<div style="width:48px;height:48px;border-radius:50%;background:'+sc+';color:#080c18;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:9px;letter-spacing:1px;flex-shrink:0">'+sigLabel+'</div>'+
+    '<div style="flex:1">'+
+      '<div style="font-weight:700;font-size:15px;color:'+sc+'">'+d.ticker+' &mdash; '+d.strategy+'</div>'+
+      '<div style="font-size:11px;color:var(--text2);margin-top:4px;line-height:1.6">'+
+        reasons.map(function(r){
+          var ic=issues.find(function(i){return i.msg===r;});
+          var col=ic?(ic.level==='critical'?'#ef4444':'#f59e0b'):'#22c55e';
+          return '<span style="color:'+col+'">'+r+'</span>';
+        }).join('<br>')+
+      '</div>'+
+      (d.lastDate?'<div style="font-size:9px;color:var(--text3);margin-top:4px">Price as of '+d.lastDate+'</div>':'')+
+    '</div>'+
+  '</div>';
+
+  // ── Core metrics grid ────────────────────────────────────────────────────
+  var metrics=[];
+
+  // Price always first
+  metrics.push(mc2('LIVE PRICE',d.price?'$'+d.price:'N/A','var(--text)'));
+
+  // DTE
+  if(d.dte!=null){
+    var dteCol=d.dte>=prefs.dteLow&&d.dte<=prefs.dteHigh?'#22c55e':d.dte<prefs.dteLow?'#f59e0b':'var(--text3)';
+    metrics.push(mc2('DTE',d.dte+'d',dteCol));
+  }
+
+  // Delta
+  if(d.absDelta!=null){
+    var deltaCol=d.absDelta<=prefs.deltaHigh?'#22c55e':d.absDelta<=prefs.deltaHigh+0.05?'#f59e0b':'#ef4444';
+    metrics.push(mc2('DELTA',d.absDelta.toFixed(3)+(d.deltaSource==='Tradier'?' ✓':' ~'),deltaCol));
+  }
+
+  // IV if available
+  if(d.iv!=null) metrics.push(mc2('IV',d.iv+'%','var(--text)'));
+  else if(d.hv30!=null) metrics.push(mc2('HV30',d.hv30+'%','var(--text3)'));
+
+  // Strategy-specific metrics
+  var sg=d.strategyGroup||'';
+
+  if(sg==='credit_spread'||sg==='csp'||sg==='covered_call'){
+    if(d.cushionPct!=null) metrics.push(mc2('CUSHION',d.cushionPct+'%',cushC(d.cushionPct)));
+    if(d.breakeven!=null)  metrics.push(mc2('BREAKEVEN','$'+d.breakeven,'var(--text)'));
+    if(d.crWidthPct!=null) metrics.push(mc2('CR/WIDTH',d.crWidthPct+'%',d.crWidthPct>=prefs.creditWidthMin?'#22c55e':'#f59e0b'));
+    if(d.maxProfit!=null)  metrics.push(mc2('MAX PROFIT','$'+d.maxProfit.toFixed(0),'#22c55e'));
+    if(d.maxLoss!=null)    metrics.push(mc2('MAX LOSS','$'+d.maxLoss.toFixed(0),'#ef4444'));
+    if(d.probWorthless!=null) metrics.push(mc2('PROB WORTHLESS',Math.round(d.probWorthless*100)+'%','#22c55e'));
+  }
+
+  if(sg==='iron_condor'||sg==='iron_butterfly'){
+    if(d.putCushionPct!=null)  metrics.push(mc2('PUT CUSHION',d.putCushionPct+'%',cushC(d.putCushionPct)));
+    if(d.callCushionPct!=null) metrics.push(mc2('CALL CUSHION',d.callCushionPct+'%',cushC(d.callCushionPct)));
+    if(d.putBreakeven!=null)   metrics.push(mc2('PUT BE','$'+d.putBreakeven,'var(--text)'));
+    if(d.callBreakeven!=null)  metrics.push(mc2('CALL BE','$'+d.callBreakeven,'var(--text)'));
+    if(d.maxProfit!=null)      metrics.push(mc2('MAX PROFIT','$'+d.maxProfit.toFixed(0),'#22c55e'));
+    if(d.maxLoss!=null)        metrics.push(mc2('MAX LOSS','$'+d.maxLoss.toFixed(0),'#ef4444'));
+    if(d.probMaxProfit!=null)  metrics.push(mc2('PROB MAX PROFIT',Math.round(d.probMaxProfit*100)+'%','#f59e0b'));
+  }
+
+  if(sg==='bwb'||sg==='butterfly'||sg==='ratio_spread'){
+    if(d.lowerBE!=null)       metrics.push(mc2('LOWER BE','$'+d.lowerBE,'var(--text)'));
+    if(d.upperBE!=null)       metrics.push(mc2('UPPER BE','$'+d.upperBE,'var(--text)'));
+    if(d.maxProfit!=null)     metrics.push(mc2('MAX PROFIT','$'+d.maxProfit.toFixed(0),'#22c55e'));
+    if(d.maxLoss!=null)       metrics.push(mc2('MAX LOSS','$'+d.maxLoss.toFixed(0),'#ef4444'));
+    if(d.crRatio!=null)       metrics.push(mc2('CR/RISK',d.crRatio+'%',d.crRatio>=20?'#22c55e':d.crRatio>=12?'#f59e0b':'#ef4444'));
+    if(d.probMaxProfit!=null) metrics.push(mc2('PROB MAX',Math.round(d.probMaxProfit*100)+'%','#f59e0b'));
+    if(d.probAnyProfit!=null) metrics.push(mc2('PROB PROFIT',Math.round(d.probAnyProfit*100)+'%','#22c55e'));
+  }
+
+  if(sg==='put_debit_spread'||sg==='call_debit_spread'){
+    if(d.breakeven!=null)     metrics.push(mc2('BREAKEVEN','$'+d.breakeven,'var(--text)'));
+    if(d.movePct!=null)       metrics.push(mc2('MOVE NEEDED',d.movePct+'%',d.movePct<5?'#22c55e':d.movePct<10?'#f59e0b':'#ef4444'));
+    if(d.maxProfit!=null)     metrics.push(mc2('MAX PROFIT','$'+d.maxProfit.toFixed(0),'#22c55e'));
+    if(d.maxLoss!=null)       metrics.push(mc2('MAX LOSS','$'+d.maxLoss.toFixed(0),'#ef4444'));
+    if(d.riskReward!=null)    metrics.push(mc2('RISK/REWARD',d.riskReward+':1',d.riskReward<1?'#22c55e':d.riskReward<2?'#f59e0b':'#ef4444'));
+    if(d.probAnyProfit!=null) metrics.push(mc2('PROB PROFIT',Math.round(d.probAnyProfit*100)+'%','#22c55e'));
+  }
+
+  if(sg==='long_call'||sg==='long_put'){
+    if(d.breakeven!=null)     metrics.push(mc2('BREAKEVEN','$'+d.breakeven,'var(--text)'));
+    if(d.maxLoss!=null)       metrics.push(mc2('MAX LOSS','$'+d.maxLoss.toFixed(0),'#ef4444'));
+    if(d.probITM!=null)       metrics.push(mc2('PROB ITM',Math.round(d.probITM*100)+'%','#22c55e'));
+    if(d.probWorthless!=null) metrics.push(mc2('PROB WORTHLESS',Math.round(d.probWorthless*100)+'%','#ef4444'));
+    if(d.dailyDecay!=null)    metrics.push(mc2('DAILY DECAY','~$'+( d.dailyDecay*100).toFixed(2),'#f59e0b'));
+  }
+
+  // Expected move always useful
+  if(d.em!=null) metrics.push(mc2('EXP MOVE','±$'+d.em,'#f59e0b'));
+
+  // Earnings
+  var earnCol=d.earningsRisk?'#ef4444':'#22c55e';
+  var earnVal=d.earningsRisk?'⚠ '+d.earningsDate:(d.earningsDate?'✓ '+d.earningsDate:'✓ CLEAR');
+  metrics.push(mc2('EARNINGS',earnVal,earnCol));
+
+  html+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:0 12px 10px">'+metrics.join('')+'</div>';
+
+  // ── Wheel scenarios (CSP / CC) ───────────────────────────────────────────
+  if(d.wheelScenarios){
+    var ws=d.wheelScenarios;
+    html+='<div class="card"><div style="font-size:10px;color:var(--text3);font-weight:600;text-transform:uppercase;letter-spacing:.5px;margin-bottom:10px">Wheel Scenarios</div>';
+    if(ws.ifAssigned){
+      html+='<div style="margin-bottom:10px;padding:10px;background:var(--surface2);border-radius:8px">'+
+        '<div style="font-size:10px;color:var(--text2);font-weight:600;margin-bottom:4px">IF ASSIGNED</div>'+
+        '<div style="font-size:12px;color:var(--text);line-height:1.7">'+ws.ifAssigned.note+'</div>'+
+        '<div style="font-size:11px;color:var(--text2);margin-top:4px">Effective cost basis: <strong style="color:var(--green)">$'+ws.ifAssigned.effectiveCostBasis+'</strong></div>'+
       '</div>';
     }
-    html+='<div style="padding:0 12px"><button class="btn btn-success btn-w" onclick="logFromAnalysis()">&check; I TOOK THIS TRADE -- LOG IT</button></div>';
-    $('az-result').innerHTML=html;
-  }catch(e){
-    $('az-result').innerHTML='<div style="padding:14px;color:var(--red);font-size:11px">Fetch failed: '+e.message+'</div>';
-  }finally{btn.disabled=false;btn.textContent='&rarr; Analyze Trade';}
+    if(ws.ifCalledAway){
+      html+='<div style="margin-bottom:10px;padding:10px;background:var(--surface2);border-radius:8px">'+
+        '<div style="font-size:10px;color:var(--text2);font-weight:600;margin-bottom:4px">IF CALLED AWAY</div>'+
+        '<div style="font-size:12px;color:var(--text);line-height:1.7">'+ws.ifCalledAway.note+'</div>'+
+      '</div>';
+    }
+    if(ws.ifNotAssigned&&ws.ifNotAssigned.yieldData){
+      var yd=ws.ifNotAssigned.yieldData;
+      html+='<div style="padding:10px;background:var(--surface2);border-radius:8px">'+
+        '<div style="font-size:10px;color:var(--text2);font-weight:600;margin-bottom:4px">IF NOT ASSIGNED / NOT CALLED</div>'+
+        '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin-top:6px">'+
+          mc2('TRADE RETURN',yd.tradeReturnPct+'%','#22c55e')+
+          mc2('MONTHLY',yd.monthlyPct+'%','#22c55e')+
+          mc2('ANNUALIZED',yd.annualizedPct+'%','#22c55e')+
+        '</div>'+
+      '</div>';
+    }
+    if(ws.ifNotCalled&&ws.ifNotCalled.yieldData){
+      var yd2=ws.ifNotCalled.yieldData;
+      html+='<div style="padding:10px;background:var(--surface2);border-radius:8px">'+
+        '<div style="font-size:10px;color:var(--text2);font-weight:600;margin-bottom:4px">IF NOT CALLED</div>'+
+        '<div style="font-size:12px;color:var(--text2);margin-bottom:6px">'+ws.ifNotCalled.note+'</div>'+
+        '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px">'+
+          mc2('TRADE RETURN',yd2.tradeReturnPct+'%','#22c55e')+
+          mc2('MONTHLY',yd2.monthlyPct+'%','#22c55e')+
+          mc2('ANNUALIZED',yd2.annualizedPct+'%','#22c55e')+
+        '</div>'+
+      '</div>';
+    }
+    html+='</div>';
+  }
+
+  // ── Profit tiers (butterfly/BWB/condor) ──────────────────────────────────
+  if(d.profitTiers&&d.profitTiers.length>0){
+    html+='<div class="card"><div style="font-size:10px;color:var(--text3);font-weight:600;text-transform:uppercase;letter-spacing:.5px;margin-bottom:10px">Profit Probability Tiers</div>';
+    d.profitTiers.forEach(function(tier){
+      var pct2=tier.prob!=null?Math.round(tier.prob*100):0;
+      var barW=Math.max(4,pct2);
+      html+='<div style="margin-bottom:10px">'+
+        '<div style="display:flex;justify-content:space-between;font-size:11px;margin-bottom:4px">'+
+          '<span style="color:var(--text2)">'+(tier.pct*100).toFixed(0)+'% of max ($'+tier.dollars+')</span>'+
+          '<span style="color:#22c55e;font-family:var(--mono)">'+pct2+'% chance</span>'+
+        '</div>'+
+        '<div style="height:4px;background:var(--surface3);border-radius:2px">'+
+          '<div style="height:100%;width:'+barW+'%;background:#22c55e;border-radius:2px"></div>'+
+        '</div>'+
+      '</div>';
+    });
+    html+='</div>';
+  }
+
+  // ── Long option realistic targets ────────────────────────────────────────
+  if((d.strategyGroup==='long_call'||d.strategyGroup==='long_put')&&d.profitTargets&&d.profitTargets.length>0){
+    html+='<div class="card">'+
+      '<div style="font-size:10px;color:var(--text3);font-weight:600;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">Realistic Profit Targets</div>'+
+      '<div style="font-size:10px;color:var(--yellow);margin-bottom:10px">&#9888; Theoretical max profit is misleading. Here is what is actually realistic:</div>';
+    d.profitTargets.forEach(function(t){
+      var probPct=t.prob!=null?Math.round(t.prob*100):0;
+      var moveDir=d.strategyGroup==='long_call'?'+':'-';
+      html+='<div style="display:flex;justify-content:space-between;align-items:center;padding:7px 0;border-bottom:1px solid var(--border)">'+
+        '<div>'+
+          '<span style="font-size:12px;font-weight:600;color:var(--text)">'+moveDir+(t.movePct*100).toFixed(0)+'% move</span>'+
+          '<span style="font-size:10px;color:var(--text3);margin-left:8px">stock at $'+t.targetPrice+'</span>'+
+        '</div>'+
+        '<div style="text-align:right">'+
+          '<div style="font-size:12px;font-weight:700;color:#22c55e">+$'+t.profit.toFixed(0)+'</div>'+
+          '<div style="font-size:10px;color:var(--text3)">'+probPct+'% chance</div>'+
+        '</div>'+
+      '</div>';
+    });
+    if(d.framingNote){
+      html+='<div style="font-size:10px;color:var(--text3);margin-top:10px;line-height:1.5">'+d.framingNote+'</div>';
+    }
+    html+='</div>';
+  }
+
+  // ── Key levels ───────────────────────────────────────────────────────────
+  if(d.supports&&d.supports.length>0){
+    html+='<div class="card"><div style="font-size:10px;color:var(--text3);font-weight:600;text-transform:uppercase;letter-spacing:.5px;margin-bottom:10px">Key Levels</div>'+
+      '<div style="display:flex;gap:24px;margin-bottom:8px">'+
+        '<div><div style="font-size:9px;color:#22c55e;letter-spacing:1px;margin-bottom:6px">SUPPORT</div>'+
+          d.supports.map(function(p){return '<div style="font-size:16px;font-weight:700;color:#22c55e;font-family:var(--mono)">$'+p+'</div>';}).join('')+
+        '</div>'+
+        (d.resistances&&d.resistances.length?
+          '<div><div style="font-size:9px;color:#ef4444;letter-spacing:1px;margin-bottom:6px">RESISTANCE</div>'+
+            d.resistances.map(function(p){return '<div style="font-size:16px;font-weight:700;color:#ef4444;font-family:var(--mono)">$'+p+'</div>';}).join('')+
+          '</div>':'')+
+      '</div>'+
+      (d.exitSignal?'<div style="padding:8px 11px;background:rgba(239,68,68,.06);border-radius:7px;font-size:10px;color:#fca5a5;border:1px solid rgba(239,68,68,.15)">&#9889; Exit signal -- Close if '+d.ticker+' breaks $'+d.exitSignal+'</div>':'')+
+      (d.sma20?'<div style="font-size:10px;color:var(--text3);margin-top:8px">SMA20: $'+d.sma20+' &bull; SMA50: $'+d.sma50+'</div>':'')+
+    '</div>';
+  }
+
+  // ── Log trade button ─────────────────────────────────────────────────────
+  html+='<div style="padding:0 12px"><button class="btn btn-success btn-w" onclick="logFromAnalysis()">&check; I TOOK THIS TRADE -- LOG IT</button></div>';
+
+  $('az-result').innerHTML=html;
 }
 
 function logFromAnalysis(){
