@@ -963,7 +963,7 @@ function renderTrades(){
     '</div>'+
     '<div class="fld"><label>Journal Tags</label>'+
       '<div style="display:flex;flex-wrap:wrap;gap:3px;margin-top:4px">'+
-        TRADE_TAGS.map((tag,i)=>'<button class="tag" id="ttag-'+i+'" onclick="toggleTag('+i+',\''+tag+\')"data-tag="'+tag+'">'+tag+'</button>').join('')+
+        TRADE_TAGS.map(function(tag,i){ return '<button class="tag" id="ttag-'+i+'" onclick="toggleTag('+i+',&apos;'+tag+'&apos;)" data-tag="'+tag+'">'+tag+'</button>'; }).join('')+
       '</div>'+
     '</div>'+
     '<div class="fld"><label>Notes</label><input id="tf-notes" placeholder="Delta, context..."></div>'+
@@ -1107,7 +1107,7 @@ function submitTrade(){
   const sector=TICKER_SECTOR[ticker]||null;
   trades.unshift({
     id:Date.now(),ticker,strategy:formStrat,legs:formLegData.map(l=>({...l})),
-    expDate:expRaw,dteOpen:$('tf-dte')?.value||dte != null ? dte.toString() : ""||'',
+    expDate:expRaw,dteOpen:($('tf-dte') ? $('tf-dte').value : '') || (dte != null ? dte.toString() : ''),
     creditReceived:credit.toString(),maxRisk:collateral.toString(),
     stockAtOpen:stock.toString(),exitSignal:$('tf-exit')?.value||'',
     notes:$('tf-notes')?.value||'',openDate:new Date().toISOString().slice(0,10),
