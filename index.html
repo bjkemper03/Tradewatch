@@ -7,6 +7,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <title>OptionsPlus</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.6/dist/umd/supabase.min.js"></script>
+  <script src="./js/scoring.js"></script>
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap');
 :root{
@@ -638,38 +639,7 @@ function bsDelta(S,K,T,sig,type='put'){
   const d1=(Math.log(S/K)+.5*sig*sig*T)/(sig*Math.sqrt(T));
   return type==='call'?ncdf(d1):ncdf(d1)-1;
 }
-function sVIX(lv,chg){
-  let s=62;if(lv===null)return s;
-  if(lv<16)s+=18;else if(lv<20)s+=10;else if(lv<24)s+=2;else if(lv<28)s-=10;else if(lv<33)s-=22;else s-=38;
-  if(chg>35)s-=28;else if(chg>20)s-=16;else if(chg>12)s-=7;else if(chg<-15)s+=8;else if(chg<-8)s+=4;
-  return Math.max(0,Math.min(100,s));
-}
-function sStruct(s50,s200,q50,rspDiff){
-  let s=55;
-  if(s50)s+=15;else s-=18;if(s200)s+=10;else s-=10;if(q50)s+=10;else s-=8;
-  if(rspDiff>0.5)s+=10;else if(rspDiff<-1.5)s-=15;else if(rspDiff<-0.5)s-=5;
-  return Math.max(0,Math.min(100,s));
-}
-function sSent(fg,creditChg){
-  let s=65;
-  if(fg){if(fg.score>75)s-=5;else if(fg.score<30)s-=20;else if(fg.score<45)s-=10;}
-  if(creditChg>20)s-=28;else if(creditChg>10)s-=15;else if(creditChg>4)s-=7;else if(creditChg<-5)s+=10;
-  return Math.max(0,Math.min(100,s));
-}
-function getSig(vs,ss,sent){
-  const w=vs*.40+ss*.35+sent*.15+10;
-  if(Math.min(vs,ss)<25||w<36)return 'RED';
-  if(Math.min(vs,ss)<42||w<56)return 'YELLOW';
-  return 'GREEN';
-}
-function assessTrade(cushion,dte){
-  const c=parseFloat(cushion)||0,d=parseInt(dte)||999;
-  if(c>=prefs.cushionMin+2&&d>7)return{label:'SAFE',color:'#22c55e',cls:'safe'};
-  if(c>=prefs.cushionMin+2&&d<=7)return{label:'EXPIRING',color:'#f59e0b',cls:'warn'};
-  if(c>=prefs.cushionMin&&d>5)return{label:'MONITOR',color:'#f59e0b',cls:'warn'};
-  if(c>=prefs.cushionMin&&d<=5)return{label:'AT RISK',color:'#ef4444',cls:'risk'};
-  return{label:'CRITICAL',color:'#ef4444',cls:'risk'};
-}
+// scoring functions loaded from js/scoring.js
 
 // ============================================================
 // COLLATERAL / BWB
@@ -816,12 +786,7 @@ function buildCalendarEvents(){
 // ============================================================
 // GUIDANCE
 // ============================================================
-function buildGuidance(sig,vix,spy,creditChg,fg,rspDiff){
-  const s=prefs.cushionMin+'%';
-  if(sig==='GREEN')return(vix && vix.ok&&vix && vix.level?'VIX at '+vix.level+' is '+(vix.level<18?'low -- ideal for premium collection.':'moderate.'):'Market structure constructive.')+' '+(fg?'Fear/Greed at '+fg.score+' ('+fg.rating+').':'')+' '+(spy && spy.above50&&spy && spy.above200?'SPY holding above both key MAs.':spy && spy.above50?'SPY above 50MA.':'SPY below 50MA -- watch.')+' Your '+prefs.dteLow+'-'+prefs.dteHigh+' DTE credit structures are well-positioned. Stick to '+s+' cushion minimum.';
-  if(sig==='YELLOW')return 'Mixed environment. '+(vix && vix.ok&&vix && vix.chg>10?'VIX spiked '+vix.chg+'% in 5 days. ':'')+' Size down, close positions below '+s+' cushion, check calendar before new opens.';
-  return 'Elevated risk. '+(vix && vix.ok&&vix && vix.level>30?'VIX at '+vix.level+' is high fear. ':'')+' Avoid new positions until conditions normalize.';
-}
+// buildGuidance loaded from js/scoring.js
 
 // ============================================================
 // SHARED HTML HELPERS
