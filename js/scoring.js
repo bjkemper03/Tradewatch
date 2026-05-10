@@ -1,13 +1,15 @@
 // =============================================================================
-// scoring.js -- Market signal scoring and trade assessment
+// js/scoring.js -- Market signal scoring and trade assessment
+// Loaded by index.html as a plain script tag -- no imports/exports needed.
+// All functions are global so index.html and page modules can call them.
 // =============================================================================
 
 // ---------------------------------------------------------------------------
-// Signal scoring
+// VIX scoring (0-100)
 // ---------------------------------------------------------------------------
 function scoreVIX(level, chg) {
   let s = 62;
-  if (level === null) return s;
+  if (level === null || level === undefined) return s;
   if      (level < 16) s += 18;
   else if (level < 20) s += 10;
   else if (level < 24) s += 2;
@@ -22,10 +24,13 @@ function scoreVIX(level, chg) {
   return Math.max(0, Math.min(100, s));
 }
 
+// ---------------------------------------------------------------------------
+// Market structure scoring (0-100)
+// ---------------------------------------------------------------------------
 function scoreStructure(above50, above200, qqqAbove50, rspDiff) {
   let s = 55;
-  if (above50)  s += 15; else s -= 18;
-  if (above200) s += 10; else s -= 10;
+  if (above50)    s += 15; else s -= 18;
+  if (above200)   s += 10; else s -= 10;
   if (qqqAbove50) s += 10; else s -= 8;
   if      (rspDiff >  0.5) s += 10;
   else if (rspDiff < -1.5) s -= 15;
@@ -33,6 +38,9 @@ function scoreStructure(above50, above200, qqqAbove50, rspDiff) {
   return Math.max(0, Math.min(100, s));
 }
 
+// ---------------------------------------------------------------------------
+// Sentiment scoring (0-100)
+// ---------------------------------------------------------------------------
 function scoreSentiment(fg, creditChg) {
   let s = 65;
   if (fg) {
@@ -47,6 +55,9 @@ function scoreSentiment(fg, creditChg) {
   return Math.max(0, Math.min(100, s));
 }
 
+// ---------------------------------------------------------------------------
+// Overall signal -- GREEN / YELLOW / RED
+// ---------------------------------------------------------------------------
 function getSignal(vixScore, structScore, sentScore) {
   const composite = vixScore * 0.40 + structScore * 0.35 + sentScore * 0.15 + 10;
   if (Math.min(vixScore, structScore) < 25 || composite < 36) return 'RED';
@@ -54,12 +65,20 @@ function getSignal(vixScore, structScore, sentScore) {
   return 'GREEN';
 }
 
+// ---------------------------------------------------------------------------
+// Build full signal result from market data object
+// ---------------------------------------------------------------------------
 function buildSignalResult(mkt) {
   const { vix, fg, spy, qqq, hyg, rsp } = mkt;
-  const creditChg = hyg?.perf5 ? -hyg.perf5 * 2 : 0;
-  const rspDiff   = (rsp && spy) ? parseFloat((rsp.perf5 - spy.perf5).toFixed(2)) : 0;
-  const vixScore  = scoreVIX(vix?.level, vix?.chg || 0);
-  const structScore = scoreStructure(spy?.above50, spy?.above200, qqq?.above50, rspDiff);
+  const creditChg   = (hyg && hyg.perf5) ? -hyg.perf5 * 2 : 0;
+  const rspDiff     = (rsp && spy) ? parseFloat((rsp.perf5 - spy.perf5).toFixed(2)) : 0;
+  const vixScore    = scoreVIX(vix && vix.level, (vix && vix.chg) || 0);
+  const structScore = scoreStructure(
+    spy && spy.above50,
+    spy && spy.above200,
+    qqq && qqq.above50,
+    rspDiff
+  );
   const sentScore = scoreSentiment(fg, creditChg);
   const composite = Math.round(vixScore * 0.40 + structScore * 0.35 + sentScore * 0.15 + 10);
   const signal    = getSignal(vixScore, structScore, sentScore);
@@ -67,12 +86,12 @@ function buildSignalResult(mkt) {
 }
 
 // ---------------------------------------------------------------------------
-// Trade assessment (uses user prefs)
+// Trade assessment -- uses global prefs object from index.html
 // ---------------------------------------------------------------------------
-function assessTrade(cushionPct, dte, prefs) {
-  const c = parseFloat(cushionPct) || 0;
-  const d = parseInt(dte) || 999;
-  const min = prefs.cushionMin;
+function assessTrade(cushion, dte) {
+  const c   = parseFloat(cushion) || 0;
+  const d   = parseInt(dte) || 999;
+  const min = (typeof prefs !== 'undefined') ? prefs.cushionMin : 5;
   if (c >= min + 2 && d > 7)  return { label: 'SAFE',     color: '#22c55e', cls: 'safe' };
   if (c >= min + 2 && d <= 7) return { label: 'EXPIRING', color: '#f59e0b', cls: 'warn' };
   if (c >= min     && d > 5)  return { label: 'MONITOR',  color: '#f59e0b', cls: 'warn' };
@@ -81,77 +100,43 @@ function assessTrade(cushionPct, dte, prefs) {
 }
 
 // ---------------------------------------------------------------------------
-// BWB quality scorer
+// Guidance text for overview page
 // ---------------------------------------------------------------------------
-function scoreBWB(legs, credit, price, dte, earningsRisk, prefs) {
-  const cr  = parseFloat(credit) || 0;
-  const bwb = calcBWBMaxLoss(legs, cr);
-  const be  = calcBWBBreakeven(legs, cr);
-  if (!bwb || !be) return null;
+function buildGuidance(sig, vix, spy, creditChg, fg, rspDiff) {
+  const cushMin = (typeof prefs !== 'undefined') ? prefs.cushionMin : 5;
+  const dteRange = (typeof prefs !== 'undefined') ? prefs.dteLow + '-' + prefs.dteHigh : '14-21';
+  const s = cushMin + '%';
 
-  const contracts = legs.find(l => l.a === 'SELL')?.n || 1;
-  const crDollar  = cr * 100 * contracts;
-  const crRatio   = bwb.maxLoss > 0 ? parseFloat((crDollar / bwb.maxLoss * 100).toFixed(1)) : 0;
-  const beCushion = price > 0 ? parseFloat(((price - be) / price * 100).toFixed(1)) : 0;
-  const dteOk     = dte >= prefs.dteLow - 2 && dte <= prefs.dteHigh + 2;
-  const wingRatio = bwb.upper > 0 ? parseFloat((bwb.lower / bwb.upper).toFixed(2)) : 0;
-
-  let score = 0;
-  const notes = [];
-
-  if      (crRatio >= 20) { score += 35; notes.push('\u2713 Strong credit/risk ratio ' + crRatio + '%'); }
-  else if (crRatio >= 12) { score += 20; notes.push('\u25b3 Moderate credit ratio ' + crRatio + '%'); }
-  else                    { score += 5;  notes.push('\u2717 Low credit ratio ' + crRatio + '%'); }
-
-  if      (beCushion >= prefs.cushionMin + 3) { score += 30; notes.push('\u2713 ' + beCushion + '% cushion to breakeven'); }
-  else if (beCushion >= prefs.cushionMin)     { score += 18; notes.push('\u25b3 ' + beCushion + '% cushion to BE -- acceptable'); }
-  else if (beCushion >= 3)                    { score += 8;  notes.push('\u26a0 ' + beCushion + '% cushion to BE -- tight'); }
-  else                                        {              notes.push('\u2717 ' + beCushion + '% cushion -- too tight'); }
-
-  if (!earningsRisk) { score += 20; notes.push('\u2713 Earnings clear'); }
-  else               {              notes.push('\u2717 Earnings within expiration'); }
-
-  if (dteOk) { score += 10; notes.push('\u2713 DTE ' + dte + ' in range'); }
-  else       {              notes.push('\u25b3 DTE ' + dte + ' outside ' + prefs.dteLow + '-' + prefs.dteHigh); }
-
-  if (wingRatio >= 1.5 && wingRatio <= 3) { score += 5; notes.push('\u2713 Wing ratio ' + wingRatio + ':1'); }
-  else                                    {             notes.push('\u25b3 Wing ratio ' + wingRatio + ':1'); }
-
-  let grade, gradeColor, gradeLabel;
-  if      (score >= 75) { grade = 'A';    gradeColor = '#22c55e'; gradeLabel = 'Strong setup'; }
-  else if (score >= 50) { grade = 'B';    gradeColor = '#f59e0b'; gradeLabel = 'Acceptable -- monitor'; }
-  else                  { grade = 'SKIP'; gradeColor = '#ef4444'; gradeLabel = 'Below your criteria'; }
-
-  return { grade, gradeColor, gradeLabel, score, notes, crRatio, beCushion, maxLoss: bwb.maxLoss, crDollar, be, wingRatio };
-}
-
-// ---------------------------------------------------------------------------
-// Signal guidance text
-// ---------------------------------------------------------------------------
-function buildGuidanceText(signal, mkt, prefs, scores) {
-  const { vix, fg, spy } = mkt;
-  const { rspDiff, creditChg } = scores;
-  const s = prefs.cushionMin + '%';
-
-  if (signal === 'GREEN') {
-    return (vix?.ok && vix?.level
-      ? 'VIX at ' + vix.level + ' is ' + (vix.level < 18 ? 'low -- ideal for premium collection.' : 'moderate and stable.')
-      : 'Market structure constructive.')
+  if (sig === 'GREEN') {
+    return (vix && vix.ok && vix.level
+        ? 'VIX at ' + vix.level + ' is ' + (vix.level < 18 ? 'low -- ideal for premium collection.' : 'moderate and stable.')
+        : 'Market structure constructive.')
       + ' ' + (fg ? 'Fear/Greed at ' + fg.score + ' (' + fg.rating + ').' : '')
-      + ' ' + (spy?.above50 && spy?.above200 ? 'SPY holding above both key moving averages.' : spy?.above50 ? 'SPY above 50MA.' : 'SPY below 50MA -- watch.')
-      + ' ' + (rspDiff > 0.5 ? 'Equal-weight outperforming -- broad participation.' : rspDiff < -1 ? 'Narrow market -- only large caps leading. Be selective.' : '')
-      + ' Your ' + prefs.dteLow + '-' + prefs.dteHigh + ' DTE credit structures are well-positioned. Stick to ' + s + ' cushion minimum.';
+      + ' ' + (spy && spy.above50 && spy.above200 ? 'SPY holding above both key moving averages.'
+               : spy && spy.above50 ? 'SPY above 50MA.' : 'SPY below 50MA -- watch.')
+      + ' ' + (rspDiff > 0.5 ? 'Equal-weight outperforming -- broad participation.'
+               : rspDiff < -1 ? 'Narrow market -- only large caps leading. Be selective.' : '')
+      + ' Your ' + dteRange + ' DTE credit structures are well-positioned. Stick to ' + s + ' cushion minimum.';
   }
-  if (signal === 'YELLOW') {
+  if (sig === 'YELLOW') {
     return 'Mixed environment.'
-      + (vix?.ok && vix?.chg > 10 ? ' VIX spiked ' + vix.chg + '% in 5 days -- elevated fear.' : '')
+      + (vix && vix.ok && vix.chg > 10 ? ' VIX spiked ' + vix.chg + '% in 5 days -- elevated fear.' : '')
       + (fg && fg.score < 35 ? ' Market showing fear -- be selective.' : '')
       + (rspDiff < -1 ? ' Breadth narrowing.' : '')
       + ' Size down, close positions below ' + s + ' cushion, check calendar before any new opens.';
   }
   return 'Elevated risk.'
-    + (vix?.ok && vix?.level > 30 ? ' VIX at ' + vix.level + ' is high fear.' : '')
+    + (vix && vix.ok && vix.level > 30 ? ' VIX at ' + vix.level + ' is high fear.' : '')
     + (fg && fg.score < 25 ? ' Extreme fear in market.' : '')
     + (creditChg > 10 ? ' Credit spreads widening.' : '')
     + ' Avoid new positions until conditions normalize.';
 }
+
+// ---------------------------------------------------------------------------
+// Backward-compatible aliases (index.html uses old short names)
+// These keep existing code working without changes during the split
+// ---------------------------------------------------------------------------
+var sVIX    = scoreVIX;
+var sStruct = scoreStructure;
+var sSent   = scoreSentiment;
+var getSig  = getSignal;
