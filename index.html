@@ -9,6 +9,7 @@
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.6/dist/umd/supabase.min.js"></script>
   <script src="./js/scoring.js"></script>
   <script src="./js/tradeCalc.js"></script>
+  <script src="./js/marketData.js"></script>
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap');
 :root{
@@ -580,16 +581,7 @@ const TICKER_SECTOR = {
   UNH:'Healthcare',CYTK:'Healthcare',AMZN:'Consumer Disc.',EBAY:'Consumer Disc.',
   SPY:'S&P 500',QQQ:'Nasdaq',
 };
-const SEC_META = [
-  {sym:'XLK',name:'Technology',top3:'AAPL, MSFT, NVDA',note:'High IV -- best premium environment. Rate and earnings sensitive.'},
-  {sym:'SOXX',name:'Semiconductors',top3:'NVDA, AVGO, AMD',note:'Highest vol in your universe. Best premium but most gap risk.'},
-  {sym:'XLC',name:'Comm. Services',top3:'META, GOOGL, NFLX',note:'META in portfolio. High IV around earnings.'},
-  {sym:'XLF',name:'Financials',top3:'JPM, BAC, GS',note:'Rate-sensitive -- avoid within 5 days of FOMC.'},
-  {sym:'XLE',name:'Energy',top3:'XOM, CVX, COP',note:'Moves with oil. Cleaner trends, lower IV.'},
-  {sym:'XLV',name:'Healthcare',top3:'UNH, JNJ, LLY',note:'Biotech can gap 20%+ on trial data.'},
-  {sym:'XLY',name:'Consumer Disc.',top3:'AMZN, TSLA, HD',note:'Watches consumer spending and tariff news.'},
-  {sym:'XLI',name:'Industrials',top3:'GE, CAT, HON',note:'Steady mover. Lower IV -- good for conservative CSPs.'},
-];
+// SEC_META loaded from js/marketData.js
 
 // ============================================================
 // UTILITIES
@@ -603,8 +595,7 @@ function toast(m, d=2500) {
   const t=$('toast'); t.textContent=m; t.style.display='block';
   setTimeout(()=>t.style.display='none',d);
 }
-function gc(k,ttl){try{const c=JSON.parse(localStorage.getItem(k)||'null');if(c&&Date.now()-c.ts<ttl)return c.data;}catch(e){}return null;}
-function sc2(k,d){localStorage.setItem(k,JSON.stringify({data:d,ts:Date.now()}));}
+// gc, sc2 loaded from js/marketData.js
 function saveTrades(){localStorage.setItem(TK,JSON.stringify(trades));}
 function saveHist(){localStorage.setItem(HK,JSON.stringify(hist));}
 function savePrefs(){localStorage.setItem(CK.prefs,JSON.stringify(prefs));}
@@ -621,71 +612,12 @@ function savePrefs(){localStorage.setItem(CK.prefs,JSON.stringify(prefs));}
 // calcBWBMaxLoss, calcBWBBreakeven, calcCollateral loaded from js/tradeCalc.js
 
 
-// ============================================================
-// DATA FETCHERS (use /api/* routes)
-// ============================================================
-async function fetchMarketData(force=false){
-  if(!force){const c=gc(CK.mkt,TTL.mkt);if(c)return c;}
-  try{
-    const r=await fetch(API.market+(force?'?force=true':''),{signal:AbortSignal.timeout(30000)});
-    const d=await r.json();
-    if(d.ok&&d.data){sc2(CK.mkt,d.data);return d.data;}
-  }catch(e){console.error('Market fetch error:',e);}
-  return null;
-}
-async function fetchEarningsData(ticker){
-  const ck=CK.earn+ticker;
-  const c=gc(ck,TTL.earn);if(c!==null)return c;
-  try{
-    const r=await fetch(API.earnings+'?ticker='+ticker,{signal:AbortSignal.timeout(10000)});
-    const d=await r.json();
-    if(d.ok){const res=d.date?{ticker,date:d.date}:null;sc2(ck,res);return res;}
-  }catch(e){}
-  return null;
-}
-async function fetchQuote(ticker){
-  const ck=CK.lp+ticker;
-  const c=gc(ck,TTL.lp);if(c)return c;
-  try{
-    const r=await fetch(API.quote+'?ticker='+ticker,{signal:AbortSignal.timeout(10000)});
-    const d=await r.json();
-    if(d.ok){sc2(ck,{price:d.price,date:d.date});return{price:d.price,date:d.date};}
-  }catch(e){}
-  return null;
-}
+// fetchMarketData, fetchEarningsData, fetchQuote loaded from js/marketData.js
 
 // ============================================================
 // CALENDAR EVENTS
 // ============================================================
-function buildCalendarEvents(){
-  const today=new Date(),y=today.getFullYear();
-  const events=[];
-  const fomcDates=[
-    new Date(y,0,28),new Date(y,2,18),new Date(y,4,6),new Date(y,5,17),
-    new Date(y,6,29),new Date(y,8,16),new Date(y,10,4),new Date(y,11,16)
-  ];
-  fomcDates.forEach(d=>{
-    if(d>=new Date(today.getFullYear(),today.getMonth()-1,1))
-      events.push({d,name:'FOMC Meeting',sector:'ALL',impact:'HIGH',note:'Fed rate decision. VIX typically spikes. Avoid opening new positions within 48hrs.'});
-  });
-  for(let m=0;m<12;m++){
-    const d=new Date(y,m,1);let fri=0;
-    while(fri<3){if(d.getDay()===5)fri++;if(fri<3)d.setDate(d.getDate()+1);}
-    if(d>=today)events.push({d:new Date(d),name:'Monthly OPEX',sector:'ALL',impact:'MED',note:'Options expiration. Unusual price action near popular strikes. Pin risk on short strikes.'});
-  }
-  for(let m=0;m<12;m++){
-    const d=new Date(y,m,1);let wed=0;
-    while(wed<2){if(d.getDay()===3)wed++;if(wed<2)d.setDate(d.getDate()+1);}
-    d.setDate(d.getDate()+1);
-    if(d>=today)events.push({d:new Date(d),name:'CPI Report',sector:'ALL',impact:'HIGH',note:'Inflation data. Hot CPI = Fed stays hawkish = market pressure.'});
-  }
-  for(let m=0;m<12;m++){
-    const d=new Date(y,m,1);
-    while(d.getDay()!==5)d.setDate(d.getDate()+1);
-    if(d>=today)events.push({d:new Date(d),name:'Jobs Report (NFP)',sector:'ALL',impact:'HIGH',note:'Non-farm payrolls. Strong jobs = Fed stays hawkish.'});
-  }
-  return events;
-}
+// buildCalendarEvents loaded from js/marketData.js
 
 // ============================================================
 // GUIDANCE
