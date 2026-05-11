@@ -6,14 +6,10 @@
 // =============================================================================
 
 // ---------------------------------------------------------------------------
-// Supabase client (loaded via CDN in index.html)
+// Supabase client -- reuses _sbClient initialized in index.html
 // ---------------------------------------------------------------------------
-let _sb = null;
 function sb() {
-  if (!_sb) {
-    _sb = window.supabase.createClient(CONFIG.SUPABASE_URL, CONFIG.SUPABASE_ANON_KEY);
-  }
-  return _sb;
+  return _sbClient;
 }
 
 // ---------------------------------------------------------------------------
