@@ -11,6 +11,7 @@
   <script src="./js/ui.js"></script>
   <script src="./js/tradeCalc.js"></script>
   <script src="./js/marketData.js"></script>
+  <script src="./js/storage.js"></script><!-- CHANGE 1: added storage.js -->
   <script src="./js/pages/prefs.js"></script>
   <script src="./js/pages/stats.js"></script>
   <script src="./js/pages/calendar.js"></script>
@@ -603,9 +604,30 @@ function toast(m, d=2500) {
   setTimeout(()=>t.style.display='none',d);
 }
 // gc, sc2 loaded from js/marketData.js
-function saveTrades(){localStorage.setItem(TK,JSON.stringify(trades));}
-function saveHist(){localStorage.setItem(HK,JSON.stringify(hist));}
-function savePrefs(){localStorage.setItem(CK.prefs,JSON.stringify(prefs));}
+
+// CHANGE 2: saveTrades now writes localStorage first, then Supabase async
+function saveTrades() {
+  localStorage.setItem(TK, JSON.stringify(trades));
+  if (_sbClient && currentUser) {
+    saveUserSettings({ ...prefs }).catch(e => console.warn('[OP] saveTrades settings sync failed:', e));
+  }
+}
+
+// CHANGE 3: saveHist now writes localStorage first, then Supabase async
+function saveHist() {
+  localStorage.setItem(HK, JSON.stringify(hist));
+  if (_sbClient && currentUser) {
+    saveBaseline(hist).catch(e => console.warn('[OP] saveHist Supabase sync failed:', e));
+  }
+}
+
+// CHANGE 4: savePrefs now writes localStorage first, then Supabase async
+function savePrefs() {
+  localStorage.setItem(CK.prefs, JSON.stringify(prefs));
+  if (_sbClient && currentUser) {
+    saveUserSettings(prefs).catch(e => console.warn('[OP] savePrefs Supabase sync failed:', e));
+  }
+}
 
 // parseExp, calcDTE, safeNum, isDebitStrat loaded from js/tradeCalc.js
 
@@ -685,12 +707,32 @@ function showPage(name){
 // ============================================================
 // APP INIT (called after auth)
 // ============================================================
-function initApp(){
-  // Load persisted state
+async function initApp(){
+  // Load from localStorage immediately so the UI isn't blank
   try{trades=JSON.parse(localStorage.getItem(TK)||'[]');}catch(e){trades=[];}
   try{hist=JSON.parse(localStorage.getItem(HK)||JSON.stringify(DEFAULT_HIST));}catch(e){hist={...DEFAULT_HIST};}
   try{prefs=JSON.parse(localStorage.getItem(CK.prefs)||JSON.stringify(DEFAULT_PREFS));}catch(e){prefs={...DEFAULT_PREFS};}
   if(!localStorage.getItem(HK))saveHist();
+
+  // Then pull fresh data from Supabase in the background
+  if (_sbClient && currentUser) {
+    try {
+      const [sbTrades, sbPrefs, sbHist] = await Promise.all([
+        getTrades(),
+        getUserSettings(),
+        getBaseline()
+      ]);
+      if (sbTrades && sbTrades.length)  trades = sbTrades;
+      if (sbPrefs)                       prefs  = sbPrefs;
+      if (sbHist && sbHist.total_trades) hist   = sbHist;
+      // Refresh local cache with Supabase data
+      localStorage.setItem(TK,       JSON.stringify(trades));
+      localStorage.setItem(CK.prefs, JSON.stringify(prefs));
+      localStorage.setItem(HK,       JSON.stringify(hist));
+    } catch(e) {
+      console.warn('[OP] Supabase load failed, using localStorage cache:', e);
+    }
+  }
 
   // Set date header
   $('hdr-date').textContent=new Date().toLocaleDateString('en-US',{weekday:'short',month:'short',day:'numeric'}).toUpperCase();
