@@ -72,11 +72,18 @@ function buildPnlSeries(closed, startSize) {
           .forEach(function(t) { baselinePnl += tradePnlDollars(t); });
   }
 
-  var pts = [{
-    date:  chartStart,
-    pnl:   baselinePnl,
-    label: statsRange === 'ALL' ? 'Baseline' : 'Start'
-  }];
+  // On ALL view: diagonal dashed line from $0 at chartStart up/down to baselinePnl
+  // at the first real trade date (or now). Shows historical journey without individual records.
+  // On ranged views: single anchor point at the pre-computed baselinePnl.
+  var pts = [];
+  if (statsRange === 'ALL') {
+    var baselineEnd = sorted.length ? firstTradeDate : now;
+    if (baselineEnd <= chartStart) baselineEnd = new Date(chartStart.getTime() + 86400000);
+    pts.push({ date: chartStart,  pnl: 0,           label: 'Baseline start' });
+    pts.push({ date: baselineEnd, pnl: baselinePnl, label: 'Baseline end • ' + (baselinePnl >= 0 ? '+' : '') + '$' + baselinePnl.toFixed(0) });
+  } else {
+    pts.push({ date: chartStart, pnl: baselinePnl, label: 'Start' });
+  }
 
   var running = baselinePnl;
   inRange.forEach(function(t) {
