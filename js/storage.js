@@ -197,19 +197,7 @@ async function getBaseline() {
     .select('*')
     .single();
   if (error && error.code !== 'PGRST116') throw error;
-  if (!data) return { ...DEFAULT_HIST };
-  return {
-    ...DEFAULT_HIST,
-    totalTrades:  data.total_trades  ?? data.totalTrades  ?? DEFAULT_HIST.totalTrades,
-    wins:         data.wins          ?? DEFAULT_HIST.wins,
-    losses:       data.losses        ?? DEFAULT_HIST.losses,
-    breakeven:    data.breakeven     ?? DEFAULT_HIST.breakeven,
-    realizedPnl:  data.realized_pnl  ?? data.realizedPnl  ?? DEFAULT_HIST.realizedPnl,
-    winPct:       data.win_pct       ?? data.winPct       ?? DEFAULT_HIST.winPct,
-    avgWinPct:    data.avg_win_pct   ?? data.avgWinPct    ?? DEFAULT_HIST.avgWinPct,
-    avgLossPct:   data.avg_loss_pct  ?? data.avgLossPct   ?? DEFAULT_HIST.avgLossPct,
-    profitFactor: data.profit_factor ?? data.profitFactor ?? DEFAULT_HIST.profitFactor,
-  };
+  return data || { ...DEFAULT_HIST };
 }
 
 async function saveBaseline(baseline) {

@@ -6,6 +6,7 @@
 function renderPrefs() {
   var el = $('page-prefs');
   if (!el) return;
+  var startSize = prefs.startingAccountSize || prefs.accountSize || 10000;
 
   el.innerHTML =
     '<div class="fadeup">' +
@@ -56,8 +57,11 @@ function renderPrefs() {
       '<div style="font-size:10px;color:var(--text3);font-weight:600;text-transform:uppercase;letter-spacing:.5px;margin-bottom:12px">Account</div>' +
       '<div class="pref-row"><span style="font-size:12px;color:var(--text2)">Display name</span>' +
         '<input type="text" value="' + (prefs.displayName || '') + '" style="width:130px;font-size:12px" onblur="prefs.displayName=this.value;savePrefs()"></div>' +
-      '<div class="pref-row"><span style="font-size:12px;color:var(--text2)">Account size $</span>' +
-        '<input type="number" value="' + prefs.accountSize + '" style="width:110px;font-family:var(--mono)" onblur="prefs.accountSize=parseInt(this.value)||10000;savePrefs()"></div>' +
+      '<div class="pref-row"><span style="font-size:12px;color:var(--text2)">Starting account $</span>' +
+        '<input type="number" value="' + startSize + '" style="width:110px;font-family:var(--mono)" onblur="prefs.startingAccountSize=parseInt(this.value)||10000;prefs.accountSize=prefs.accountSize||prefs.startingAccountSize;savePrefs()"></div>' +
+      '<div class="pref-row"><span style="font-size:12px;color:var(--text2)">Sizing account $</span>' +
+        '<input type="number" value="' + (prefs.accountSize || startSize) + '" style="width:110px;font-family:var(--mono)" onblur="prefs.accountSize=parseInt(this.value)||prefs.startingAccountSize||10000;savePrefs()"></div>' +
+      '<div style="font-size:10px;color:var(--text3);margin-top:6px;line-height:1.5">Starting account anchors the P/L chart. Sizing account can change for future trade collateral without rewriting past returns.</div>' +
       '<div style="font-size:10px;color:var(--text3);margin-top:6px">Signed in as: ' + (currentUser && currentUser.email ? currentUser.email : 'unknown') + '</div>' +
     '</div>' +
 

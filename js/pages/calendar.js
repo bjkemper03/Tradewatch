@@ -95,7 +95,7 @@ async function renderCalendar() {
     return html;
   }
 
-  el.innerHTML =
+  var calendarHtml =
     '<div style="text-align:right;padding:0 16px 6px">' +
       '<button class="btn btn-ghost btn-sm" onclick="showPage(\'sectors\')" style="font-size:10px">View Sectors &rarr;</button>' +
     '</div>' +
@@ -104,6 +104,15 @@ async function renderCalendar() {
       '<div class="cal-tab" id="cal-tab-past">Past Events</div>' +
     '</div>' +
     '<div id="cal-content"></div>';
+
+  if (document.body && document.body.classList.contains('desktop')) {
+    el.innerHTML = '<div class="desktop-cal-sec">' +
+      '<div>' + calendarHtml + '</div>' +
+      '<div><div class="desktop-panel-title">Sector Watch</div>' + await buildSectorsHtml() + '</div>' +
+    '</div>';
+  } else {
+    el.innerHTML = calendarHtml;
+  }
 
   $('cal-content').innerHTML = renderEvList(upcoming);
 
@@ -122,11 +131,7 @@ async function renderCalendar() {
 // ---------------------------------------------------------------------------
 // SECTORS PAGE
 // ---------------------------------------------------------------------------
-async function renderSectors() {
-  var el = $('page-sectors');
-  if (!el) return;
-  el.innerHTML = spinHtml('FETCHING SECTORS...');
-
+async function buildSectorsHtml() {
   var perf = gc(CK.sec, TTL.sec);
   if (!perf) {
     perf = {};
@@ -194,8 +199,15 @@ async function renderSectors() {
   });
 
   html += '<div style="text-align:center;padding:8px 0 12px">' +
-    '<button class="btn btn-ghost btn-sm" style="margin-top:6px" onclick="localStorage.removeItem(CK.sec);renderSectors()">&#8635; Refresh Sectors</button>' +
+    '<button class="btn btn-ghost btn-sm" style="margin-top:6px" onclick="localStorage.removeItem(CK.sec);showPage(curPage)">&#8635; Refresh Sectors</button>' +
   '</div>';
 
-  el.innerHTML = html;
+  return html;
+}
+
+async function renderSectors() {
+  var el = $('page-sectors');
+  if (!el) return;
+  el.innerHTML = spinHtml('FETCHING SECTORS...');
+  el.innerHTML = await buildSectorsHtml();
 }
