@@ -1,9 +1,5 @@
 // =============================================================================
-// js/pages/trades.js -- Trades page: log form, open positions, closed trades
-// Depends on globals: trades, prefs, formLegData, formStrat, selectedTags,
-//   showHistory, livePrices, azResult, DEF, STRAT_GROUPS, TRADE_TAGS,
-//   TICKER_SECTOR, safeNum(), calcDTE(), calcCollateral(), assessTrade(),
-//   fetchQuote(), saveTrades(), toast(), showPage(), mc2(), g3html()
+// js/pages/trades.js -- Trades page
 // =============================================================================
 
 // ---------------------------------------------------------------------------
@@ -32,12 +28,6 @@ function renderTrades() {
   var today  = new Date();
   var open   = trades.filter(function(t) { return t.status === 'OPEN'; });
   var closed = trades.filter(function(t) { return t.status === 'CLOSED'; });
-  var recent = closed.filter(function(t) {
-    return !t.closeDate || (today - new Date(t.closeDate)) < 30 * 24 * 60 * 60 * 1000;
-  });
-  var old = closed.filter(function(t) {
-    return t.closeDate && (today - new Date(t.closeDate)) >= 30 * 24 * 60 * 60 * 1000;
-  });
 
   open.forEach(function(t) {
     var d = parseExp(t.expDate);
@@ -97,20 +87,20 @@ function renderTrades() {
 
   // ── Open trade cards ──────────────────────────────────────────────────────
   open.forEach(function(t) {
-    var legs   = t.legs || [];
-    var dte    = t.currentDTE;
-    var dteC   = dte !== undefined ? (dte <= 5 ? 'var(--red)' : dte <= 10 ? 'var(--yellow)' : 'var(--green)') : 'var(--text3)';
-    var lp     = livePrices[t.ticker];
-    var curPx  = (lp && lp.price) || safeNum(t.stockAtOpen);
+    var legs       = t.legs || [];
+    var dte        = t.currentDTE;
+    var dteC       = dte !== undefined ? (dte <= 5 ? 'var(--red)' : dte <= 10 ? 'var(--yellow)' : 'var(--green)') : 'var(--text3)';
+    var lp         = livePrices[t.ticker];
+    var curPx      = (lp && lp.price) || safeNum(t.stockAtOpen);
     var priceLabel = lp ? ('$' + curPx + ' live') : (t.stockAtOpen ? '$' + t.stockAtOpen + ' open' : null);
-    var be     = safeNum(t.breakeven);
+    var be         = safeNum(t.breakeven);
     var liveCushion = curPx > 0 && be > 0
       ? parseFloat(((curPx - be) / curPx * 100).toFixed(1))
       : safeNum(t.cushionPct);
-    var assess = assessTrade(liveCushion, dte);
-    var pnl    = safeNum(t.currentPnlPct);
-    var sector = TICKER_SECTOR[t.ticker] || null;
-    var tags   = t.tags || [];
+    var assess  = assessTrade(liveCushion, dte);
+    var pnl     = safeNum(t.currentPnlPct);
+    var sector  = TICKER_SECTOR[t.ticker] || null;
+    var tags    = t.tags || [];
 
     html += '<div class="tc ' + assess.cls + '">' +
       '<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:9px">' +
@@ -137,9 +127,9 @@ function renderTrades() {
         }).join('') +
       '</div>' +
       g3html([
-        mc2('Price',       priceLabel || 'N/A', lp ? 'var(--green)' : 'var(--text)'),
-        mc2('Credit/shr',  '$' + (t.creditReceived || '?'), 'var(--green)'),
-        mc2('Collateral',  '$' + (t.maxRisk || '?'),        'var(--text)')
+        mc2('Price',      priceLabel || 'N/A',              lp ? 'var(--green)' : 'var(--text)'),
+        mc2('Credit/shr', '$' + (t.creditReceived || '?'),  'var(--green)'),
+        mc2('Collateral', '$' + (t.maxRisk || '?'),         'var(--text)')
       ]) +
       (tags.length > 0
         ? '<div style="margin-bottom:8px">' +
@@ -157,21 +147,67 @@ function renderTrades() {
       '<div style="display:flex;gap:5px">' +
         '<input type="number" placeholder="P&L %" value="' + (t.currentPnlPct || '') + '" onblur="updPnl(' + t.id + ',this.value)" style="flex:1;font-family:var(--mono);font-size:13px;color:' + (pnl >= 40 ? 'var(--green)' : pnl < -15 ? 'var(--red)' : 'var(--text)') + '">' +
         '<button onclick="closeT(' + t.id + ',\'PROFIT\')" class="btn btn-success btn-sm">&#10003; Win</button>' +
-        '<button onclick="closeT(' + t.id + ',\'STOP\')" class="btn btn-danger btn-sm">&#10007; Loss</button>' +
-        '<button onclick="delT(' + t.id + ')" class="btn btn-ghost btn-sm" style="color:var(--red);border-color:rgba(239,68,68,.3)">&#128465;</button>' +
+        '<button onclick="closeT(' + t.id + ',\'STOP\')"   class="btn btn-danger btn-sm">&#10007; Loss</button>' +
+        '<button onclick="delT('  + t.id + ')"             class="btn btn-ghost btn-sm" style="color:var(--red);border-color:rgba(239,68,68,.3)">&#128465;</button>' +
       '</div>' +
     '</div>';
   });
 
-  // ── Closed trades ─────────────────────────────────────────────────────────
-  if (recent.length > 0) {
-    html += '<div class="mhdr">Recently Closed</div>';
-    recent.forEach(function(t) { html += closedRow(t); });
-  }
-  if (old.length > 0) {
-    html += '<button class="btn btn-ghost btn-w" style="margin:6px 12px;width:calc(100% - 24px)" onclick="showHistory=!showHistory;renderTrades()">' +
-      (showHistory ? '&#9650; Hide' : '&#9660; Show') + ' Older Trades (' + old.length + ')</button>';
-    if (showHistory) old.forEach(function(t) { html += closedRow(t); });
+  // ── Closed trades with strategy tabs ─────────────────────────────────────
+  if (closed.length > 0) {
+    // Build tab list: All + unique strategies in closed trades
+    var strategies = [];
+    closed.forEach(function(t) {
+      if (t.strategy && strategies.indexOf(t.strategy) === -1) strategies.push(t.strategy);
+    });
+    strategies.sort();
+
+    // Reset tab if strategy no longer exists
+    if (tradesTab !== 'All' && strategies.indexOf(tradesTab) === -1) tradesTab = 'All';
+
+    var tabsHtml = '<div style="display:flex;overflow-x:auto;gap:0;border-bottom:1px solid var(--border);margin:12px 12px 0;scrollbar-width:none">';
+    ['All'].concat(strategies).forEach(function(s) {
+      var isActive = tradesTab === s;
+      var count = s === 'All' ? closed.length : closed.filter(function(t){ return t.strategy === s; }).length;
+      tabsHtml += '<button onclick="tradesTab=\'' + s.replace(/'/g,"\\'") + '\';tradesExpanded=false;renderTrades()" ' +
+        'style="flex-shrink:0;padding:7px 13px;background:transparent;border:none;border-bottom:2px solid ' +
+        (isActive ? 'var(--blue2)' : 'transparent') +
+        ';color:' + (isActive ? 'var(--blue2)' : 'var(--text3)') +
+        ';font-family:var(--sans);font-size:11px;font-weight:' + (isActive ? '600' : '500') +
+        ';cursor:pointer;white-space:nowrap">' +
+        s + ' <span style="opacity:.6">(' + count + ')</span>' +
+      '</button>';
+    });
+    tabsHtml += '</div>';
+    html += tabsHtml;
+
+    // Filter closed trades by active tab
+    var tabClosed = tradesTab === 'All'
+      ? closed.slice()
+      : closed.filter(function(t) { return t.strategy === tradesTab; });
+
+    tabClosed.sort(function(a, b) {
+      var da = new Date((a.closeDate || a.closed_at || a.openDate || '') + 'T12:00:00');
+      var db = new Date((b.closeDate || b.closed_at || b.openDate || '') + 'T12:00:00');
+      return db - da;
+    });
+
+    var SHOW_LIMIT  = 5;
+    var visible     = tradesExpanded ? tabClosed : tabClosed.slice(0, SHOW_LIMIT);
+
+    visible.forEach(function(t) { html += closedRow(t); });
+
+    if (tabClosed.length > SHOW_LIMIT) {
+      if (!tradesExpanded) {
+        html += '<button class="btn btn-ghost btn-w" style="margin:4px 12px 8px;width:calc(100% - 24px)" ' +
+          'onclick="tradesExpanded=true;renderTrades()">' +
+          '&#9660; Show all ' + tabClosed.length + ' trades</button>';
+      } else {
+        html += '<button class="btn btn-ghost btn-w" style="margin:4px 12px 8px;width:calc(100% - 24px)" ' +
+          'onclick="tradesExpanded=false;renderTrades()">' +
+          '&#9650; Show less</button>';
+      }
+    }
   }
 
   html += '</div>';
@@ -204,7 +240,7 @@ function closedRow(t) {
 }
 
 // ---------------------------------------------------------------------------
-// Strategy pill selector
+// Strategy pill selector (for log form)
 // ---------------------------------------------------------------------------
 function buildStratPills(active) {
   return Object.keys(STRAT_GROUPS).map(function(grp) {
@@ -219,7 +255,7 @@ function buildStratPills(active) {
 }
 
 function selectStrat(s) {
-  formStrat  = s;
+  formStrat   = s;
   formLegData = (DEF[s] || [{ a:'BUY', t:'PUT', n:1, s:'' }]).map(function(l) { return Object.assign({}, l); });
   document.querySelectorAll('.sp').forEach(function(p) { p.classList.toggle('active', p.textContent === s); });
   buildLegs();
@@ -227,7 +263,7 @@ function selectStrat(s) {
 }
 
 // ---------------------------------------------------------------------------
-// Leg builder -- trade log form
+// Leg builder
 // ---------------------------------------------------------------------------
 function buildLegs() {
   var c = $('lc');
@@ -363,7 +399,7 @@ function delT(id) {
 }
 
 // ---------------------------------------------------------------------------
-// Log from analysis -- pre-fills trade form from analyze result
+// Log from analysis
 // ---------------------------------------------------------------------------
 function logFromAnalysis() {
   if (!azResult) return;
@@ -377,6 +413,7 @@ function logFromAnalysis() {
       if ($('tf-tk'))    $('tf-tk').value    = azResult.ticker || '';
       if ($('tf-px'))    $('tf-px').value    = azResult.price    != null ? azResult.price.toFixed(2)    : '';
       if ($('tf-exp'))   $('tf-exp').value   = azResult.exp      || '';
+      if ($('tf-dte'))   $('tf-dte').value   = azResult.dte      != null ? azResult.dte.toString()      : '';
       if ($('tf-cr'))    $('tf-cr').value    = azResult.credit   != null ? azResult.credit.toString()   : '';
       if ($('tf-col'))   $('tf-col').value   = azResult.collateral != null ? azResult.collateral.toFixed(0) : '';
       if ($('tf-exit'))  $('tf-exit').value  = azResult.exitSignal != null ? azResult.exitSignal.toString() : '';

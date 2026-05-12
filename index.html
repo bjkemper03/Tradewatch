@@ -644,7 +644,7 @@ const DEFAULT_HIST = { totalTrades:0, wins:0, losses:0, breakeven:0, realizedPnl
 let trades = [], hist = {...DEFAULT_HIST}, prefs = {...DEFAULT_PREFS};
 let azLegData = [], azStrat = 'PUT CREDIT SPREAD', azResult = null;
 let formLegData = [], formStrat = 'PUT CREDIT SPREAD';
-let selectedTags = [], showHistory = false, livePrices = {};
+let selectedTags = [], showHistory = false, livePrices = {}, tradesTab = 'All', tradesExpanded = false;
 
 // ============================================================
 // STRATEGIES
