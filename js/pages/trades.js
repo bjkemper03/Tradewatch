@@ -413,6 +413,7 @@ function logFromAnalysis() {
       if ($('tf-tk'))    $('tf-tk').value    = azResult.ticker || '';
       if ($('tf-px'))    $('tf-px').value    = azResult.price    != null ? azResult.price.toFixed(2)    : '';
       if ($('tf-exp'))   $('tf-exp').value   = azResult.exp      || '';
+      if ($('tf-dte'))   $('tf-dte').value   = azResult.dte      != null ? azResult.dte.toString()      : '';
       if ($('tf-cr'))    $('tf-cr').value    = azResult.credit   != null ? azResult.credit.toString()   : '';
       if ($('tf-col'))   $('tf-col').value   = azResult.collateral != null ? azResult.collateral.toFixed(0) : '';
       if ($('tf-exit'))  $('tf-exit').value  = azResult.exitSignal != null ? azResult.exitSignal.toString() : '';
