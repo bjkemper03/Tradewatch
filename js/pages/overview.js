@@ -89,18 +89,6 @@ function renderOverview() {
           rspDiff > 0.5 ? 'var(--green)' : rspDiff < -1 ? 'var(--red)' : 'var(--yellow)') +
       '</div>' +
 
-      // ── Fear & Greed ──────────────────────────────────────────────────────
-      '<div class="card">' +
-        '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">' +
-          '<span style="font-size:11px;color:var(--text2);font-weight:500">CNN Fear &amp; Greed</span>' +
-          '<span style="font-family:var(--mono);font-size:13px;font-weight:700;color:' + fgCol + '">' + fgScore + ' &mdash; ' + ((fg && fg.rating) || 'N/A') + '</span>' +
-        '</div>' +
-        '<div style="height:5px;background:linear-gradient(to right,#ef4444,#f59e0b,#22c55e);border-radius:3px;position:relative">' +
-          '<div style="position:absolute;top:-4px;left:calc(' + fgScore + '% - 7px);width:13px;height:13px;border-radius:50%;background:var(--text);border:2px solid var(--bg)"></div>' +
-        '</div>' +
-        '<div style="display:flex;justify-content:space-between;margin-top:5px;font-size:9px;color:var(--text3)"><span>Fear</span><span>Greed</span></div>' +
-      '</div>' +
-
       // ── Guidance ──────────────────────────────────────────────────────────
       '<div class="card">' +
         '<div style="font-size:10px;color:var(--text3);font-weight:600;text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px">What This Means</div>' +

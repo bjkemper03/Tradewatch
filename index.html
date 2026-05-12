@@ -121,9 +121,20 @@ input[type=number]{-moz-appearance:textfield}
 
 body.desktop #side-nav{display:flex}
 body.desktop .nav{display:none}
-body.desktop #app{max-width:none;margin-left:var(--side-w);padding-bottom:16px;min-height:100vh}
-body.desktop .hdr{padding:20px 24px 0;margin-bottom:18px}
+body.desktop #app{max-width:none;margin-left:var(--side-w);padding:0 24px 16px;min-height:100vh}
+body.desktop .hdr,body.desktop .page{max-width:1180px;margin-left:auto;margin-right:auto}
+body.desktop .hdr{padding:20px 0 0;margin-bottom:18px}
 body.desktop .page{padding:0}
+body.desktop .card{margin-left:0;margin-right:0}
+body.desktop .tiles{padding-left:0;padding-right:0}
+body.desktop .section-hdr{padding-left:0;padding-right:0}
+body.desktop .mhdr{margin-left:4px;margin-right:4px}
+body.desktop .cal-ev,body.desktop .sec{margin-left:0;margin-right:0}
+body.desktop .fg2{grid-template-columns:minmax(240px,1fr) minmax(240px,1fr);gap:14px}
+body.desktop .fg3{grid-template-columns:repeat(3,minmax(180px,1fr));gap:14px}
+body.desktop .leg-row{display:grid;grid-template-columns:90px 72px 12px 88px minmax(160px,320px) 24px;align-items:center}
+body.desktop .leg-row .strike-input{width:100%;max-width:320px}
+body.desktop .btn-w{max-width:520px;margin-left:auto;margin-right:auto}
 
 /* HEADER */
 .hdr{padding:14px 16px 0;display:flex;justify-content:space-between;align-items:center;margin-bottom:14px}
@@ -702,6 +713,22 @@ function savePrefs() {
   }
 }
 
+function normalizeHist(raw) {
+  raw = raw || {};
+  return {
+    ...DEFAULT_HIST,
+    totalTrades:  raw.totalTrades  ?? raw.total_trades  ?? DEFAULT_HIST.totalTrades,
+    wins:         raw.wins         ?? DEFAULT_HIST.wins,
+    losses:       raw.losses       ?? DEFAULT_HIST.losses,
+    breakeven:    raw.breakeven    ?? DEFAULT_HIST.breakeven,
+    realizedPnl:  raw.realizedPnl  ?? raw.realized_pnl  ?? DEFAULT_HIST.realizedPnl,
+    winPct:       raw.winPct       ?? raw.win_pct       ?? DEFAULT_HIST.winPct,
+    avgWinPct:    raw.avgWinPct    ?? raw.avg_win_pct   ?? DEFAULT_HIST.avgWinPct,
+    avgLossPct:   raw.avgLossPct   ?? raw.avg_loss_pct  ?? DEFAULT_HIST.avgLossPct,
+    profitFactor: raw.profitFactor ?? raw.profit_factor ?? DEFAULT_HIST.profitFactor
+  };
+}
+
 // parseExp, calcDTE, safeNum, isDebitStrat loaded from js/tradeCalc.js
 
 // ============================================================
@@ -784,7 +811,7 @@ function showPage(name){
 async function initApp(){
   // Load from localStorage immediately so the UI isn't blank
   try{trades=JSON.parse(localStorage.getItem(TK)||'[]');}catch(e){trades=[];}
-  try{hist=JSON.parse(localStorage.getItem(HK)||JSON.stringify(DEFAULT_HIST));}catch(e){hist={...DEFAULT_HIST};}
+  try{hist=normalizeHist(JSON.parse(localStorage.getItem(HK)||JSON.stringify(DEFAULT_HIST)));}catch(e){hist={...DEFAULT_HIST};}
   try{prefs=JSON.parse(localStorage.getItem(CK.prefs)||JSON.stringify(DEFAULT_PREFS));}catch(e){prefs={...DEFAULT_PREFS};}
   if(!localStorage.getItem(HK))saveHist();
 
@@ -798,7 +825,7 @@ async function initApp(){
       ]);
       if (sbTrades && sbTrades.length)  trades = sbTrades;
       if (sbPrefs)                       prefs  = sbPrefs;
-      if (sbHist && sbHist.total_trades) hist   = sbHist;
+      if (sbHist)                         hist   = normalizeHist(sbHist);
       // Refresh local cache with Supabase data
       localStorage.setItem(TK,       JSON.stringify(trades));
       localStorage.setItem(CK.prefs, JSON.stringify(prefs));
