@@ -6,6 +6,31 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <title>OptionsPlus</title>
+<script>
+// ============================================================
+// LAYOUT DETECTION
+// ============================================================
+function isDesktopLayout() {
+  return window.innerWidth >= 768;
+}
+
+function syncSideNav(page) {
+  document.querySelectorAll('#side-nav .snav-btn').forEach(function(btn) {
+    btn.classList.toggle('active', btn.dataset.page === page);
+  });
+}
+
+function applyLayout() {
+  if (!document.body) return;
+  document.body.classList.toggle('desktop', isDesktopLayout());
+  if (typeof curPage !== 'undefined') syncSideNav(curPage);
+}
+
+document.addEventListener('DOMContentLoaded', function() {
+  applyLayout();
+  window.addEventListener('resize', applyLayout);
+});
+</script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.6/dist/umd/supabase.min.js"></script>
   <script src="./js/scoring.js"></script>
   <script src="./js/ui.js"></script>
@@ -31,6 +56,7 @@
   --mono:'JetBrains Mono',monospace;
   --sans:'Space Grotesk',sans-serif;
   --nav-h:64px;
+  --side-w:200px;
 }
 *{box-sizing:border-box;margin:0;padding:0}
 body{background:var(--bg);color:var(--text);font-family:var(--sans);min-height:100vh;font-size:14px;-webkit-font-smoothing:antialiased}
@@ -79,6 +105,25 @@ input[type=number]{-moz-appearance:textfield}
 #app{max-width:440px;margin:0 auto;min-height:100vh;padding-bottom:var(--nav-h);position:relative}
 .page{padding:0 0 8px;display:none}
 .page.active{display:block}
+
+/* SIDE NAV */
+#side-nav{display:none;position:fixed;top:0;left:0;bottom:0;width:var(--side-w);background:var(--surface);border-right:1px solid var(--border);flex-direction:column;z-index:200;padding:24px 0 16px}
+#side-nav .snav-logo{padding:0 18px 24px;font-family:var(--sans);font-weight:700;font-size:17px;letter-spacing:-.3px}
+#side-nav .snav-logo span{color:var(--blue2)}
+#side-nav .snav-btn{display:flex;align-items:center;gap:11px;padding:11px 18px;background:transparent;border:none;cursor:pointer;color:var(--text3);font-family:var(--sans);font-size:13px;font-weight:500;width:100%;text-align:left;transition:color .15s,background .15s;border-radius:0}
+#side-nav .snav-btn:hover{color:var(--text);background:var(--surface2)}
+#side-nav .snav-btn.active{color:var(--blue2);background:var(--blue-dim)}
+#side-nav .snav-btn svg{width:18px;height:18px;stroke-width:1.8;flex-shrink:0}
+#side-nav .snav-spacer{flex:1}
+#side-nav .snav-bottom{padding:0 12px;display:flex;flex-direction:column;gap:6px}
+#side-nav .snav-bottom button{width:100%;background:transparent;border:1px solid var(--border);color:var(--text3);font-family:var(--sans);font-size:11px;font-weight:500;padding:7px 10px;border-radius:7px;cursor:pointer;transition:all .15s;text-align:left}
+#side-nav .snav-bottom button:hover{border-color:var(--text3);color:var(--text)}
+
+body.desktop #side-nav{display:flex}
+body.desktop .nav{display:none}
+body.desktop #app{max-width:none;margin-left:var(--side-w);padding-bottom:16px;min-height:100vh}
+body.desktop .hdr{padding:20px 24px 0;margin-bottom:18px}
+body.desktop .page{padding:0}
 
 /* HEADER */
 .hdr{padding:14px 16px 0;display:flex;justify-content:space-between;align-items:center;margin-bottom:14px}
@@ -279,6 +324,34 @@ select{appearance:none;cursor:pointer}
 
 <!-- MAIN APP -->
 <div id="main-app">
+<div id="side-nav">
+  <div class="snav-logo">Options<span>Plus</span></div>
+  <button class="snav-btn active" data-page="overview" onclick="showPage('overview')">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
+    Overview
+  </button>
+  <button class="snav-btn" data-page="analyze" onclick="showPage('analyze')">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/><path d="M11 8v6M8 11h6"/></svg>
+    Analyze
+  </button>
+  <button class="snav-btn" data-page="trades" onclick="showPage('trades')">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/></svg>
+    Trades
+  </button>
+  <button class="snav-btn" data-page="calendar" onclick="showPage('calendar')">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>
+    Calendar
+  </button>
+  <button class="snav-btn" data-page="stats" onclick="showPage('stats')">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M18 20V10M12 20V4M6 20v-6"/></svg>
+    Stats
+  </button>
+  <div class="snav-spacer"></div>
+  <div class="snav-bottom">
+    <button class="snav-btn" data-page="prefs" onclick="showPage('prefs')">&#9881; Settings</button>
+    <button onclick="doSignOut()" style="border-color:rgba(239,68,68,.3);color:var(--red)">Log Out</button>
+  </div>
+</div>
 <div id="app">
   <div class="hdr">
     <div>
@@ -695,6 +768,7 @@ function showPage(name){
     const el=$('page-'+p);if(el)el.classList.toggle('active',p===name);
     const nb=$('nb-'+p);if(nb)nb.classList.toggle('active',p===name);
   });
+  syncSideNav(name);
   if(name==='overview')renderOverview();
   if(name==='analyze')renderAnalyze();
   if(name==='trades')renderTrades();
