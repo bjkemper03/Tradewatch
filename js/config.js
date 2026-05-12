@@ -52,21 +52,24 @@ const DEFAULT_PREFS = {
   cushionMin:      5,
   creditWidthMin:  8,
   maxRiskPerTrade: 500,
+  startingAccountSize: 10000,
   accountSize:     10000,
   marketNote:      '',
 };
 
 // Historical baseline (seeded -- user can edit in prefs)
 const DEFAULT_HIST = {
-  totalTrades:  56,
-  wins:         42,
-  losses:       13,
-  breakeven:    1,
-  realizedPnl:  736,
-  winPct:       76.36,
-  avgWinPct:    51.71,
-  avgLossPct:   -47.56,
-  profitFactor: 2.84,
+  totalTrades:  0,
+  wins:         0,
+  losses:       0,
+  breakeven:    0,
+  realizedPnl:  0,
+  winPct:       null,
+  avgWinPct:    null,
+  avgLossPct:   null,
+  profitFactor: null,
+  baselinePeriodValue: 1,
+  baselinePeriodUnit: 'years',
 };
 
 // Strategy definitions
