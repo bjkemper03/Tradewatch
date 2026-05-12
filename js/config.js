@@ -64,10 +64,12 @@ const DEFAULT_HIST = {
   losses:       0,
   breakeven:    0,
   realizedPnl:  0,
-  winPct:       0,
-  avgWinPct:    0,
-  avgLossPct:   0,
-  profitFactor: 0,
+  winPct:       null,
+  avgWinPct:    null,
+  avgLossPct:   null,
+  profitFactor: null,
+  baselinePeriodValue: 1,
+  baselinePeriodUnit: 'years',
 };
 
 // Strategy definitions

@@ -636,7 +636,7 @@ const DEFAULT_PREFS = {
   dteLow:14, dteHigh:21, deltaLow:0.18, deltaHigh:0.28,
   cushionMin:5, creditWidthMin:8, maxRiskPerTrade:500, startingAccountSize:10000, accountSize:10000, marketNote:''
 };
-const DEFAULT_HIST = { totalTrades:0, wins:0, losses:0, breakeven:0, realizedPnl:0, winPct:0, avgWinPct:0, avgLossPct:0, profitFactor:0 };
+const DEFAULT_HIST = { totalTrades:0, wins:0, losses:0, breakeven:0, realizedPnl:0, winPct:null, avgWinPct:null, avgLossPct:null, profitFactor:null, baselinePeriodValue:1, baselinePeriodUnit:'years' };
 
 // ============================================================
 // STATE
@@ -734,7 +734,9 @@ function normalizeHist(raw) {
     winPct:       raw.winPct       ?? raw.win_pct       ?? DEFAULT_HIST.winPct,
     avgWinPct:    raw.avgWinPct    ?? raw.avg_win_pct   ?? DEFAULT_HIST.avgWinPct,
     avgLossPct:   raw.avgLossPct   ?? raw.avg_loss_pct  ?? DEFAULT_HIST.avgLossPct,
-    profitFactor: raw.profitFactor ?? raw.profit_factor ?? DEFAULT_HIST.profitFactor
+    profitFactor: raw.profitFactor ?? raw.profit_factor ?? DEFAULT_HIST.profitFactor,
+    baselinePeriodValue: raw.baselinePeriodValue ?? raw.baseline_period_value ?? DEFAULT_HIST.baselinePeriodValue,
+    baselinePeriodUnit:  raw.baselinePeriodUnit  ?? raw.baseline_period_unit  ?? DEFAULT_HIST.baselinePeriodUnit
   };
 }
 

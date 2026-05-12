@@ -7,6 +7,22 @@
 var statsRange = 'ALL';
 var statsCurvePoints = [];
 
+function hasStat(v) {
+  return v !== null && v !== undefined && v !== '' && Number.isFinite(parseFloat(v));
+}
+
+function statPct(v, suffix) {
+  if (!hasStat(v)) return '—';
+  return (safeNum(v) > 0 && suffix !== 'loss' ? '+' : '') + safeNum(v).toFixed(1) + '%';
+}
+
+function baselineStartDate(endDate) {
+  var value = Math.max(1, parseInt(hist.baselinePeriodValue, 10) || 1);
+  var unit = hist.baselinePeriodUnit || 'years';
+  var days = unit === 'weeks' ? value * 7 : value * 365;
+  return new Date(endDate.getTime() - days * 86400000);
+}
+
 function tradePnlDollars(t) {
   var cr = safeNum(t.creditReceived || t.credit || 0);
   var pct = safeNum(t.currentPnlPct || t.realizedPnlPct || 0);
@@ -36,10 +52,7 @@ function buildPnlSeries(closed, startSize) {
   var sorted = closed.slice().sort(function(a, b) { return closedTradeDate(a) - closedTradeDate(b); });
   var firstTradeDate = sorted.length ? closedTradeDate(sorted[0]) : now;
   var rangeStart = rangeStartFor(statsRange, now);
-  var chartStart = rangeStart || new Date(Math.min(
-    firstTradeDate.getTime(),
-    now.getTime() - 30 * 86400000
-  ));
+  var chartStart = rangeStart || baselineStartDate(firstTradeDate);
   var baselineEnd = sorted.length ? firstTradeDate : now;
   if (baselineEnd < chartStart) baselineEnd = chartStart;
 
@@ -123,7 +136,8 @@ function renderPnlCurve(points, startSize) {
     '<div class="stats-chart-wrap" onmousemove="statsChartMove(event)" onmouseleave="statsChartLeave()">' +
       '<svg viewBox="0 0 ' + w + ' ' + h + '" preserveAspectRatio="none">' +
         '<line x1="' + pad + '" y1="' + zeroY.toFixed(1) + '" x2="' + (w - pad) + '" y2="' + zeroY.toFixed(1) + '" stroke="var(--border2)" stroke-width="1"/>' +
-        '<polyline points="' + line + '" fill="none" stroke="var(--blue2)" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>' +
+        (points.length > 1 ? '<polyline points="' + points.slice(0, 2).map(function(p) { return x(p).toFixed(1) + ',' + y(p).toFixed(1); }).join(' ') + '" fill="none" stroke="var(--text3)" stroke-width="2" stroke-dasharray="7 7" stroke-linecap="round" stroke-linejoin="round"/>' : '') +
+        (points.length > 2 ? '<polyline points="' + points.slice(1).map(function(p) { return x(p).toFixed(1) + ',' + y(p).toFixed(1); }).join(' ') + '" fill="none" stroke="var(--blue2)" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>' : '') +
         points.map(function(p) {
           return '<circle cx="' + x(p).toFixed(1) + '" cy="' + y(p).toFixed(1) + '" r="4" fill="' + (p.pnl >= 0 ? 'var(--green)' : 'var(--red)') + '"/>';
         }).join('') +
@@ -166,8 +180,10 @@ function renderStats() {
   var closed = trades.filter(function(t) { return t.status === 'CLOSED' && t.currentPnlPct !== ''; });
   var open = trades.filter(function(t) { return t.status === 'OPEN'; });
   var closedWins = closed.filter(function(t) { return tradePnlDollars(t) > 0; }).length;
+  var closedLosses = closed.filter(function(t) { return tradePnlDollars(t) < 0; }).length;
   var nTotal = safeNum(hist.totalTrades) + closed.length;
   var nWins = safeNum(hist.wins) + closedWins;
+  var nLosses = safeNum(hist.losses) + closedLosses;
   var closedPnl = closed.reduce(function(acc, t) { return acc + tradePnlDollars(t); }, 0);
   var totalPnl = safeNum(hist.realizedPnl) + closedPnl;
   var startSize = safeNum(prefs.startingAccountSize || prefs.accountSize || 10000) || 10000;
@@ -177,20 +193,39 @@ function renderStats() {
   var wrc = parseFloat(wr) > 70 ? 'var(--green)' : parseFloat(wr) > 55 ? 'var(--yellow)' : 'var(--red)';
   var colInUse = open.reduce(function(a, t) { return a + safeNum(t.maxRisk); }, 0);
   var series = buildPnlSeries(closed, startSize);
+  var loggedWinPcts = closed.filter(function(t) { return tradePnlDollars(t) > 0; }).map(function(t) { return safeNum(t.currentPnlPct); });
+  var loggedLossPcts = closed.filter(function(t) { return tradePnlDollars(t) < 0; }).map(function(t) { return safeNum(t.currentPnlPct); });
+  var loggedGrossWin = closed.reduce(function(a, t) { var d = tradePnlDollars(t); return d > 0 ? a + d : a; }, 0);
+  var loggedGrossLoss = Math.abs(closed.reduce(function(a, t) { var d = tradePnlDollars(t); return d < 0 ? a + d : a; }, 0));
+  var avgWin = hasStat(hist.avgWinPct) && !loggedWinPcts.length
+    ? safeNum(hist.avgWinPct)
+    : loggedWinPcts.length
+      ? loggedWinPcts.reduce(function(a,b){return a+b;},0) / loggedWinPcts.length
+      : null;
+  var avgLoss = hasStat(hist.avgLossPct) && !loggedLossPcts.length
+    ? safeNum(hist.avgLossPct)
+    : loggedLossPcts.length
+      ? loggedLossPcts.reduce(function(a,b){return a+b;},0) / loggedLossPcts.length
+      : null;
+  var pf = hasStat(hist.profitFactor) && !closed.length
+    ? safeNum(hist.profitFactor).toFixed(2)
+    : loggedGrossLoss > 0
+      ? (loggedGrossWin / loggedGrossLoss).toFixed(2)
+      : loggedGrossWin > 0 ? '∞' : '—';
 
   prefs.accountSize = Math.round(currentEquity);
 
   var html = '<div class="fadeup">' +
-    g3html([
-      '<div class="tile"><div class="tile-label">Win Rate</div><div class="tile-value" style="color:' + wrc + '">' + wr + '%</div></div>',
-      '<div class="tile"><div class="tile-label">Closed Trades</div><div class="tile-value">' + nTotal + '</div></div>',
-      '<div class="tile"><div class="tile-label">Realized P&amp;L</div><div class="tile-value" style="color:' + (totalPnl >= 0 ? 'var(--green)' : 'var(--red)') + ';font-size:14px">' + (totalPnl >= 0 ? '+' : '') + '$' + totalPnl.toFixed(0) + '</div></div>'
-    ]) +
     g2html([
-      mc2('Current Equity', '$' + currentEquity.toFixed(0), currentEquity >= startSize ? 'var(--green)' : 'var(--red)'),
-      mc2('Return', (retPct >= 0 ? '+' : '') + retPct.toFixed(1) + '%', retPct >= 0 ? 'var(--green)' : 'var(--red)'),
-      mc2('Open Now', open.length, 'var(--blue2)'),
-      mc2('Collateral Used', '$' + colInUse.toFixed(0), 'var(--yellow)')
+      mc2('Account / Collateral', '$' + currentEquity.toFixed(0) + ' equity<br><span style="font-size:10px;color:var(--yellow)">$' + colInUse.toFixed(0) + ' used</span>', currentEquity >= startSize ? 'var(--green)' : 'var(--red)'),
+      mc2('Trades', nTotal + ' closed<br><span style="font-size:10px;color:var(--blue2)">' + open.length + ' open</span>', 'var(--text)'),
+      mc2('Win / Loss', nWins + ' / ' + nLosses + '<br><span style="font-size:10px;color:' + wrc + '">' + wr + '% win rate</span>', wrc),
+      mc2('P/L / Return', (totalPnl >= 0 ? '+' : '') + '$' + totalPnl.toFixed(0) + '<br><span style="font-size:10px;color:' + (retPct >= 0 ? 'var(--green)' : 'var(--red)') + '">' + (retPct >= 0 ? '+' : '') + retPct.toFixed(1) + '%</span>', totalPnl >= 0 ? 'var(--green)' : 'var(--red)')
+    ]) +
+    g3html([
+      mc2('Avg Winner', avgWin === null ? '—' : statPct(avgWin), 'var(--green)'),
+      mc2('Avg Loser', avgLoss === null ? '—' : statPct(avgLoss, 'loss'), 'var(--red)'),
+      mc2('Profit Factor', pf, pf === '—' ? 'var(--text3)' : 'var(--green)')
     ]) +
     renderPnlCurve(series, startSize);
 
@@ -204,7 +239,7 @@ function renderStats() {
       '<div style="flex:1">' +
         '<span style="font-family:var(--mono);font-weight:700;color:var(--blue2);margin-right:7px">BASELINE</span>' +
         '<span style="font-size:10px;color:var(--text3)">' + safeNum(hist.totalTrades) + ' trades before this log</span>' +
-        '<div style="font-size:10px;color:var(--text3);margin-top:2px">' + safeNum(hist.winPct) + '% win rate &bull; ' + safeNum(hist.profitFactor).toFixed(2) + ' profit factor</div>' +
+        '<div style="font-size:10px;color:var(--text3);margin-top:2px">' + (hasStat(hist.winPct) ? safeNum(hist.winPct).toFixed(1) + '% win rate' : 'Win rate pending') + ' &bull; ' + (hasStat(hist.profitFactor) ? safeNum(hist.profitFactor).toFixed(2) : '—') + ' profit factor</div>' +
       '</div>' +
       '<span style="font-family:var(--mono);font-size:13px;font-weight:700;color:' + (safeNum(hist.realizedPnl) >= 0 ? 'var(--green)' : 'var(--red)') + '">' + (safeNum(hist.realizedPnl) >= 0 ? '+' : '') + '$' + safeNum(hist.realizedPnl).toFixed(0) + '</span>' +
     '</div>';
@@ -227,34 +262,56 @@ function renderStats() {
   html += '</div>';
 
   html += '<div class="card">' +
-    '<div style="font-size:10px;color:var(--text3);font-weight:600;text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px">Historical Baseline</div>' +
-    '<div style="font-size:12px;color:var(--text2);line-height:1.7;margin-bottom:10px">' +
-      safeNum(hist.totalTrades) + ' trades &bull; ' + safeNum(hist.winPct) + '% win rate &bull; $' + safeNum(hist.realizedPnl).toFixed(0) + ' P&amp;L &bull; ' + safeNum(hist.profitFactor).toFixed(2) + ' profit factor<br>' +
-      'Avg winner: +' + safeNum(hist.avgWinPct) + '% &bull; Avg loser: ' + safeNum(hist.avgLossPct) + '%' +
+    '<div style="font-size:10px;color:var(--text3);font-weight:600;text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px">Import Baseline</div>' +
+    '<div style="font-size:11px;color:var(--text3);line-height:1.5;margin-bottom:10px">Use this for trading history before OptionsPlus. Leave optional fields blank; they will fill in once closed trades are logged.</div>' +
+    '<div class="fg3">' +
+      '<div class="fld"><label>Total trades</label><input id="hist-total" type="number" value="' + safeNum(hist.totalTrades) + '" style="font-family:var(--mono)"></div>' +
+      '<div class="fld"><label>Wins</label><input id="hist-wins" type="number" value="' + safeNum(hist.wins) + '" style="font-family:var(--mono)"></div>' +
+      '<div class="fld"><label>Losses</label><input id="hist-losses" type="number" value="' + safeNum(hist.losses) + '" style="font-family:var(--mono)"></div>' +
     '</div>' +
-    '<button class="btn btn-ghost btn-sm" onclick="editHist()">Edit Numbers</button>' +
+    '<div class="fg3">' +
+      '<div class="fld"><label>Baseline P/L $</label><input id="hist-pnl" type="number" value="' + safeNum(hist.realizedPnl) + '" style="font-family:var(--mono)"></div>' +
+      '<div class="fld"><label>Avg winner %</label><input id="hist-avg-win" type="number" step="0.01" value="' + (hasStat(hist.avgWinPct) ? safeNum(hist.avgWinPct) : '') + '" placeholder="Optional" style="font-family:var(--mono)"></div>' +
+      '<div class="fld"><label>Avg loser %</label><input id="hist-avg-loss" type="number" step="0.01" value="' + (hasStat(hist.avgLossPct) ? safeNum(hist.avgLossPct) : '') + '" placeholder="Optional" style="font-family:var(--mono)"></div>' +
+    '</div>' +
+    '<div class="fg3">' +
+      '<div class="fld"><label>Profit factor</label><input id="hist-pf" type="number" step="0.01" value="' + (hasStat(hist.profitFactor) ? safeNum(hist.profitFactor) : '') + '" placeholder="Optional" style="font-family:var(--mono)"></div>' +
+      '<div class="fld"><label>History length</label><input id="hist-period-value" type="number" min="1" value="' + (parseInt(hist.baselinePeriodValue, 10) || 1) + '" style="font-family:var(--mono)"></div>' +
+      '<div class="fld"><label>Unit</label><select id="hist-period-unit"><option value="weeks"' + (hist.baselinePeriodUnit === 'weeks' ? ' selected' : '') + '>Weeks</option><option value="years"' + (hist.baselinePeriodUnit !== 'weeks' ? ' selected' : '') + '>Years</option></select></div>' +
+    '</div>' +
+    '<button class="btn btn-primary btn-w" onclick="saveBaselineImport()">Save Baseline</button>' +
   '</div></div>';
 
   el.innerHTML = html;
 }
 
-function editHist() {
-  var inp = prompt(
-    'Edit baseline:\ntotalTrades,wins,losses,realizedPnl,winPct,avgWinPct,avgLossPct,profitFactor\nCurrent: ' +
-    safeNum(hist.totalTrades) + ',' + safeNum(hist.wins) + ',' + safeNum(hist.losses) + ',' + safeNum(hist.realizedPnl) + ',' +
-    safeNum(hist.winPct) + ',' + safeNum(hist.avgWinPct) + ',' + safeNum(hist.avgLossPct) + ',' + safeNum(hist.profitFactor)
-  );
-  if (!inp) return;
-  var p = inp.split(',');
-  if (p.length >= 8) {
-    hist = {
-      totalTrades:  +p[0], wins:         +p[1],
-      losses:       +p[2], realizedPnl:  +p[3],
-      winPct:       +p[4], avgWinPct:    +p[5],
-      avgLossPct:   +p[6], profitFactor: +p[7]
-    };
-    saveHist();
-    renderStats();
-    toast('Updated!');
-  }
+function inputOptionalNumber(id) {
+  var el = $(id);
+  if (!el || el.value.trim() === '') return null;
+  return safeNum(el.value, null);
+}
+
+function saveBaselineImport() {
+  var wins = safeNum($('hist-wins') && $('hist-wins').value);
+  var losses = safeNum($('hist-losses') && $('hist-losses').value);
+  var total = safeNum($('hist-total') && $('hist-total').value);
+  var counted = wins + losses;
+  if (!total && counted) total = counted;
+  hist = {
+    ...hist,
+    totalTrades: total,
+    wins: wins,
+    losses: losses,
+    breakeven: Math.max(0, total - counted),
+    realizedPnl: safeNum($('hist-pnl') && $('hist-pnl').value),
+    winPct: total > 0 ? parseFloat((wins / total * 100).toFixed(1)) : null,
+    avgWinPct: inputOptionalNumber('hist-avg-win'),
+    avgLossPct: inputOptionalNumber('hist-avg-loss'),
+    profitFactor: inputOptionalNumber('hist-pf'),
+    baselinePeriodValue: Math.max(1, parseInt(($('hist-period-value') && $('hist-period-value').value) || '1', 10)),
+    baselinePeriodUnit: (($('hist-period-unit') && $('hist-period-unit').value) || 'years')
+  };
+  saveHist();
+  renderStats();
+  toast('Baseline saved');
 }
