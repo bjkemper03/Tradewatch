@@ -206,6 +206,8 @@ export default async function handler(req, res) {
     above200:    data.above200,
     supports:    data.supports,
     resistances: data.resistances,
+    supportDetails:    data.supportDetails,
+    resistanceDetails: data.resistanceDetails,
 
     // Strategy-specific results (spread onto response)
     ...result,

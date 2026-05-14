@@ -40,6 +40,36 @@ function probBetween(S, low, high, vol, T) {
   return parseFloat(Math.max(0, pAboveLow - pAboveHigh).toFixed(4));
 }
 
+function clampProb(v) {
+  if (v === null || !Number.isFinite(v)) return null;
+  return parseFloat(Math.min(1, Math.max(0, v)).toFixed(4));
+}
+
+// Approximate probability that price touches a target before expiration.
+// This uses the reflection principle for a lognormal path with no drift forecast.
+export function calcTouchProbability(price, target, vol, dte) {
+  const T = dte / 365;
+  if (!price || !target || !vol || !T || T <= 0 || vol <= 0) return null;
+  if (target === price) return 1;
+
+  const sigT = vol * Math.sqrt(T);
+  const mu = -0.5 * vol * vol;
+
+  if (target > price) {
+    const barrier = Math.log(target / price);
+    const p = ncdf((-barrier + mu * T) / sigT) +
+      Math.exp((2 * mu * barrier) / (vol * vol)) *
+      ncdf((-barrier - mu * T) / sigT);
+    return clampProb(p);
+  }
+
+  const barrier = Math.log(price / target);
+  const p = ncdf((-barrier - mu * T) / sigT) +
+    Math.exp((-2 * mu * barrier) / (vol * vol)) *
+    ncdf((-barrier + mu * T) / sigT);
+  return clampProb(p);
+}
+
 // ---------------------------------------------------------------------------
 // EXPECTED MOVE -- 1 SD move by expiration
 // ---------------------------------------------------------------------------
@@ -76,7 +106,7 @@ export function calcPOP(price, shortStrike, vol, dte, optionType) {
 // CREDIT SPREAD -- probability tiers
 // Returns probability of keeping various % of max profit
 // ---------------------------------------------------------------------------
-export function calcCreditSpreadProbs(price, shortStrike, longStrike, vol, dte, optionType) {
+export function calcCreditSpreadProbs(price, shortStrike, longStrike, vol, dte, optionType, breakeven = null) {
   const T = dte / 365;
   const isput = optionType === 'put';
 
@@ -88,12 +118,17 @@ export function calcCreditSpreadProbs(price, shortStrike, longStrike, vol, dte, 
   const probMaxLoss = isput
     ? probBelow(price, longStrike, vol, T)
     : probAbove(price, longStrike, vol, T);
+  const probAnyProfit = breakeven
+    ? (isput ? probAbove(price, breakeven, vol, T) : probBelow(price, breakeven, vol, T))
+    : pow;
 
   return {
     probMaxProfit:  pow,                                          // expires worthless
-    probAnyProfit:  pow,                                          // same for spreads
+    probAnyProfit,
     probMaxLoss:    probMaxLoss,
-    probBreakeven:  null,                                         // spreads are binary at expiry
+    probBreakeven:  breakeven ? calcTouchProbability(price, breakeven, vol, dte) : null,
+    probTouchShort: calcTouchProbability(price, shortStrike, vol, dte),
+    probTouchLong:  calcTouchProbability(price, longStrike, vol, dte),
   };
 }
 
@@ -102,7 +137,8 @@ export function calcCreditSpreadProbs(price, shortStrike, longStrike, vol, dte, 
 // shortPutStrike, shortCallStrike = the two short strikes
 // ---------------------------------------------------------------------------
 export function calcCondorProbs(price, shortPutStrike, shortCallStrike,
-                                 longPutStrike, longCallStrike, vol, dte) {
+                                 longPutStrike, longCallStrike, vol, dte,
+                                 putBreakeven = null, callBreakeven = null) {
   const T = dte / 365;
 
   // Full max profit: price between both short strikes
@@ -114,12 +150,18 @@ export function calcCondorProbs(price, shortPutStrike, shortCallStrike,
   const probInCallWing = probBetween(price, shortCallStrike, longCallStrike, vol, T);
   const probMaxLoss    = probBetween(price, 0,               longPutStrike,  vol, T);
   const probMaxLossCall= probAbove(price,   longCallStrike,                  vol, T);
+  const probAnyProfit = putBreakeven && callBreakeven
+    ? probBetween(price, putBreakeven, callBreakeven, vol, T)
+    : null;
 
   return {
     probMaxProfit,
+    probAnyProfit,
     probInPutWing,
     probInCallWing,
     probMaxLossEither: parseFloat(((probMaxLoss || 0) + (probMaxLossCall || 0)).toFixed(4)),
+    probTouchPutShort:  calcTouchProbability(price, shortPutStrike, vol, dte),
+    probTouchCallShort: calcTouchProbability(price, shortCallStrike, vol, dte),
   };
 }
 
@@ -212,6 +254,7 @@ export function calcLongOptionTargets(price, strike, premium, vol, dte, optionTy
     const probHitting = isCall
       ? probAbove(price, targetPrice, vol, T)
       : probBelow(price, targetPrice, vol, T);
+    const probTouch = calcTouchProbability(price, targetPrice, vol, dte);
 
     return {
       movePct:    pct,
@@ -221,6 +264,7 @@ export function calcLongOptionTargets(price, strike, premium, vol, dte, optionTy
       profitDollars: parseFloat((profit * 100).toFixed(0)),
       profitPct,
       prob:       probHitting,
+      probTouch,
     };
   });
 
