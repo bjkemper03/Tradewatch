@@ -607,6 +607,7 @@ function renderAnalysisResult(d) {
     if (d.maxLoss != null || d.maxLossUnlimited)     metrics.push(mc2('MAX LOSS',   fmtRiskMoney(d.maxLoss, d.maxLossUnlimited),     '#ef4444'));
     if (d.openingCredit != null) metrics.push(mc2('OPEN CREDIT', '$' + d.openingCredit.toFixed(0), '#22c55e'));
     if (d.profitWindowUpside != null) metrics.push(mc2('WINDOW UPSIDE', '$' + d.profitWindowUpside.toFixed(0), d.profitWindowUpside >= 0 ? '#22c55e' : '#ef4444'));
+    if (d.wingRatioLabel != null) metrics.push(mc2('WING RATIO', d.wingRatioLabel, 'var(--text)'));
     if (d.crRatio != null)      metrics.push(mc2('CR/RISK',     d.crRatio + '%',              d.crRatio >= 20 ? '#22c55e' : d.crRatio >= 12 ? '#f59e0b' : '#ef4444'));
     if (d.creditCapturePct != null) metrics.push(mc2('CREDIT CAPTURE', d.creditCapturePct + '%', d.creditCapturePct >= 60 ? '#22c55e' : d.creditCapturePct >= 35 ? '#f59e0b' : '#ef4444'));
   }
@@ -698,22 +699,22 @@ function renderAnalysisResult(d) {
   if ((sg === 'long_call' || sg === 'long_put') && d.profitTargets && d.profitTargets.length > 0) {
     html += '<div class="card">' +
       '<div style="font-size:10px;color:var(--text3);font-weight:600;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">Realistic Profit Targets</div>' +
-      '<div style="font-size:10px;color:var(--yellow);margin-bottom:10px">&#9888; Theoretical max profit is misleading. Here is what is actually realistic:</div>';
+      '<div style="font-size:10px;color:var(--yellow);margin-bottom:8px">Small odds are normal for long options; touch odds and expiration odds answer different questions.</div>' +
+      '<div style="display:grid;gap:4px">';
     d.profitTargets.forEach(function(t) {
       var probPct = t.prob != null ? Math.round(t.prob * 100) : 0;
-      var moveDir = sg === 'long_call' ? '+' : '-';
-      html += '<div style="display:flex;justify-content:space-between;align-items:center;padding:7px 0;border-bottom:1px solid var(--border)">' +
-        '<div>' +
-          '<span style="font-size:12px;font-weight:600;color:var(--text)">' + moveDir + (t.movePct * 100).toFixed(0) + '% move</span>' +
-          '<span style="font-size:10px;color:var(--text3);margin-left:8px">stock at $' + t.targetPrice + '</span>' +
+      var touchPct = t.probTouch != null ? Math.round(t.probTouch * 100) : null;
+      var profitDollars = safeNum(t.profitDollars != null ? t.profitDollars : t.profit * 100);
+      html += '<div style="display:grid;grid-template-columns:1fr auto auto;gap:10px;align-items:center;padding:7px 9px;background:var(--surface2);border:1px solid var(--border);border-radius:7px">' +
+        '<div style="min-width:0">' +
+          '<span style="font-size:11px;font-weight:700;color:var(--text)">' + (t.label || ('+$' + profitDollars.toFixed(0))) + '</span>' +
+          '<span style="font-size:10px;color:var(--text3);margin-left:8px">$' + t.targetPrice + '</span>' +
         '</div>' +
-        '<div style="text-align:right">' +
-          '<div style="font-size:12px;font-weight:700;color:#22c55e">+$' + safeNum(t.profitDollars != null ? t.profitDollars : t.profit * 100).toFixed(0) + '</div>' +
-          '<div style="font-size:10px;color:var(--text3)">Exp ' + probPct + '%</div>' +
-          (t.probTouch != null ? '<div style="font-size:10px;color:var(--yellow)">Touch ' + Math.round(t.probTouch * 100) + '%</div>' : '') +
-        '</div>' +
+        '<div style="font-size:11px;font-family:var(--mono);color:' + (profitDollars > 0 ? '#22c55e' : 'var(--text2)') + '">' + (profitDollars > 0 ? '+$' : '$') + profitDollars.toFixed(0) + '</div>' +
+        '<div style="font-size:10px;font-family:var(--mono);color:var(--text3);text-align:right">Exp ' + probPct + '%' + (touchPct != null ? ' / Touch ' + touchPct + '%' : '') + '</div>' +
       '</div>';
     });
+    html += '</div>';
     if (d.framingNote) {
       html += '<div style="font-size:10px;color:var(--text3);margin-top:10px;line-height:1.5">' + d.framingNote + '</div>';
     }

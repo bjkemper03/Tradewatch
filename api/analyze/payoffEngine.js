@@ -176,11 +176,15 @@ export function summarizePayoff(model, {
 
   if (minPnl !== null) {
     const lossPoint = candidatePnls.find(p => Math.abs(p.pnl - minPnl) < 0.01);
-    if (lossPoint) addCheckpoint('Max loss point', lossPoint.px, 'Worst expiration point in this structure', 'loss');
+    if (lossPoint && !checkpoints.some(c => Math.abs(c.pnl - lossPoint.pnl) < 0.01 && (c.kind === 'loss' || c.kind === 'short' || c.kind === 'profit'))) {
+      addCheckpoint('Max loss point', lossPoint.px, 'Worst expiration point in this structure', 'loss');
+    }
   }
   if (maxPnl !== null) {
     const profitPoint = candidatePnls.find(p => Math.abs(p.pnl - maxPnl) < 0.01);
-    if (profitPoint) addCheckpoint('Max profit point', profitPoint.px, 'Best expiration point in this structure', 'profit');
+    if (profitPoint && !checkpoints.some(c => Math.abs(c.pnl - profitPoint.pnl) < 0.01 && (c.kind === 'profit' || c.kind === 'short' || c.kind === 'long'))) {
+      addCheckpoint('Max profit point', profitPoint.px, 'Best expiration point in this structure', 'profit');
+    }
   }
 
   return {

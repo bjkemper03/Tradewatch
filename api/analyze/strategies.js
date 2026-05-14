@@ -161,6 +161,15 @@ function groupedByStrike(legs) {
   return [...map.values()].sort((a, b) => a.strike - b.strike);
 }
 
+function simpleRatio(a, b) {
+  if (!a || !b) return null;
+  const x = Math.round(Math.abs(a) * 100);
+  const y = Math.round(Math.abs(b) * 100);
+  function gcd(m, n) { return n ? gcd(n, m % n) : m; }
+  const g = gcd(x, y) || 1;
+  return `${x / g}:${y / g}`;
+}
+
 function aggregateLegGreeks(chain, legs, fallbackVol, price, dte, optTypeFallback) {
   const totals = { delta: 0, gamma: 0, theta: 0, vega: 0, rho: 0 };
   let found = false;
@@ -749,6 +758,7 @@ export function analyzeButterflyBWB(data, legs, expDateObj, dte, credit, prefs, 
 
   // Wing ratio for BWB quality
   const wingRatio = upperWing ? parseFloat((lowerWing / upperWing).toFixed(2)) : null;
+  const wingRatioLabel = lowerWing && upperWing ? simpleRatio(lowerWing, upperWing) : null;
   const crRatio   = maxLoss && maxLoss > 0 && isCredit
     ? parseFloat(((cr * 100) / maxLoss * 100).toFixed(1))
     : null;
@@ -776,7 +786,7 @@ export function analyzeButterflyBWB(data, legs, expDateObj, dte, credit, prefs, 
     issues,
 
     price, centerStrike, lowerStrike, upperStrike,
-    lowerWing, upperWing, wingRatio,
+    lowerWing, upperWing, wingRatio, wingRatioLabel,
     lowerBE, upperBE,
     maxProfit, maxLoss,
     collateral: collateralFromPayoff(payoff),
@@ -943,6 +953,22 @@ export function analyzeLongOption(data, legs, expDateObj, dte, premium, prefs) {
   const payoff  = payoffSummary(legs, -prem, price, [
     { label: 'Strike', px: strike, note: isCall ? 'Call begins intrinsic value above here' : 'Put begins intrinsic value below here', kind: 'long' },
   ]);
+  const breakeven = firstBreakeven(payoff, targetData.breakeven);
+  const nowPnl = parseFloat((-prem * 100 + (isCall
+    ? Math.max(0, price - strike)
+    : Math.max(0, strike - price)) * 100).toFixed(2));
+  payoff.checkpoints = isCall
+    ? [
+        { label: 'Now', px: price, pnl: nowPnl, note: '', kind: 'now' },
+        { label: 'Breakeven', px: breakeven, pnl: 0, note: 'P/L is about $0', kind: 'be' },
+        { label: `Max loss $${strike}-`, px: strike, pnl: -payoff.maxLoss, note: 'Call expires worthless at or below strike', kind: 'loss' },
+      ]
+    : [
+        { label: 'Now', px: price, pnl: nowPnl, note: '', kind: 'now' },
+        { label: 'Breakeven', px: breakeven, pnl: 0, note: 'P/L is about $0', kind: 'be' },
+        { label: `Max loss $${strike}+`, px: strike, pnl: -payoff.maxLoss, note: 'Put expires worthless at or above strike', kind: 'loss' },
+        { label: 'Max profit $0', px: 0, pnl: payoff.maxProfit, note: 'Theoretical if stock goes to $0', kind: 'profit' },
+      ];
   const maxLoss = payoff.maxLoss;
 
   const earningsCheck = checkEarningsRisk(earnings, expDateObj);
@@ -960,7 +986,7 @@ export function analyzeLongOption(data, legs, expDateObj, dte, premium, prefs) {
     issues,
 
     price, strike, prem,
-    breakeven:    firstBreakeven(payoff, targetData.breakeven),
+    breakeven,
     maxLoss,
     collateral: collateralFromPayoff(payoff),
     maxProfit: payoff.maxProfit,
@@ -976,6 +1002,7 @@ export function analyzeLongOption(data, legs, expDateObj, dte, premium, prefs) {
     // Probability framing -- the key feature for long options
     probITM:       targetData.probITM,
     probWorthless: targetData.probWorthless,
+    probTouchBreakeven: targetData.probTouchBreakeven,
     dailyDecay:    targetData.dailyDecayEst,
 
     // Realistic profit targets -- counters "unlimited profit" misconception
