@@ -67,6 +67,21 @@ function getSignal(issues) {
   return 'GO';
 }
 
+function modelNotes(data, opts = {}) {
+  const notes = [];
+  if (!data.history) {
+    notes.push({ level:'weak', msg:'Key levels unavailable without historical candles.' });
+  } else {
+    notes.push({ level:'estimate', msg:'Support/resistance uses daily swing/SMA levels only; freshness, retests, broken levels, and volume confirmation are not fully modeled yet.' });
+  }
+  if (!opts.greeks) {
+    notes.push({ level:'estimate', msg:'Greeks and probabilities are estimated from volatility because option-chain Greeks were not available.' });
+  }
+  notes.push({ level:'estimate', msg:'Probabilities assume a lognormal price path from current volatility. Expiration odds and touch odds answer different questions.' });
+  if (opts.structureNote) notes.push({ level:'weak', msg: opts.structureNote });
+  return notes;
+}
+
 // ---------------------------------------------------------------------------
 // 1. PUT CREDIT SPREAD / CALL CREDIT SPREAD
 // ---------------------------------------------------------------------------
@@ -131,7 +146,7 @@ export function analyzeCreditSpread(data, legs, expDateObj, dte, credit, prefs) 
     : null;
 
   // Probability
-  const probs = calcCreditSpreadProbs(price, shortStrike, longStrike, vol, dte, optType);
+  const probs = calcCreditSpreadProbs(price, shortStrike, longStrike, vol, dte, optType, breakeven);
   const pow   = calcPOW(price, shortStrike, vol, dte, optType);
 
   // Support/resistance context
@@ -182,8 +197,11 @@ export function analyzeCreditSpread(data, legs, expDateObj, dte, credit, prefs) 
 
     // Probability
     probMaxProfit:   probs.probMaxProfit,
+    probAnyProfit:   probs.probAnyProfit,
     probMaxLoss:     probs.probMaxLoss,
     probWorthless:   pow,
+    probTouchShort:  probs.probTouchShort,
+    probTouchLong:   probs.probTouchLong,
 
     // Move context
     em, strikeOutsideEM,
@@ -195,6 +213,7 @@ export function analyzeCreditSpread(data, legs, expDateObj, dte, credit, prefs) 
     // Earnings
     earningsRisk: earningsCheck.risk,
     earningsDate: earningsCheck.date,
+    modelNotes: modelNotes(data, { greeks }),
   };
 }
 
@@ -257,7 +276,7 @@ export function analyzeIronCondor(data, legs, expDateObj, dte, credit, prefs) {
   const em = calcExpectedMove(price, vol, dte);
 
   // Probability
-  const probs = calcCondorProbs(price, shortPut, shortCall, longPut, longCall, vol, dte);
+  const probs = calcCondorProbs(price, shortPut, shortCall, longPut, longCall, vol, dte, putBreakeven, callBreakeven);
 
   // Earnings
   const earningsCheck = checkEarningsRisk(earnings, expDateObj);
@@ -290,14 +309,23 @@ export function analyzeIronCondor(data, legs, expDateObj, dte, credit, prefs) {
     em,
 
     probMaxProfit:   probs.probMaxProfit,
+    probAnyProfit:   probs.probAnyProfit,
     probInPutWing:   probs.probInPutWing,
     probInCallWing:  probs.probInCallWing,
     probMaxLoss:     probs.probMaxLossEither,
+    probTouchPutShort:  probs.probTouchPutShort,
+    probTouchCallShort: probs.probTouchCallShort,
 
     supports, resistances,
     earningsRisk: earningsCheck.risk,
     earningsDate: earningsCheck.date,
     isIronButterfly,
+    modelNotes: modelNotes(data, {
+      greeks: putGreeks || callGreeks,
+      structureNote: isIronButterfly
+        ? 'Iron butterfly max profit is a pin-at-strike estimate, not a broad profit zone.'
+        : null,
+    }),
   };
 }
 
@@ -395,6 +423,7 @@ export function analyzeCSP(data, legs, expDateObj, dte, credit, prefs) {
 
     // Framing note -- assignment is not a loss in wheel strategy
     wheelNote: 'Assignment means you buy shares at your effective cost basis of $' + breakeven.toFixed(2) + '. This is the goal in wheel strategy.',
+    modelNotes: modelNotes(data, { greeks }),
   };
 }
 
@@ -472,6 +501,10 @@ export function analyzeCoveredCall(data, legs, expDateObj, dte, credit, prefs) {
     supports, resistances,
     earningsRisk: earningsCheck.risk,
     earningsDate: earningsCheck.date,
+    modelNotes: modelNotes(data, {
+      greeks,
+      structureNote: 'Covered-call return uses current stock price as share basis. Add actual share cost basis before treating wheel return as exact.',
+    }),
   };
 }
 
@@ -599,6 +632,10 @@ export function analyzeButterflyBWB(data, legs, expDateObj, dte, credit, prefs, 
     supports, resistances,
     earningsRisk: earningsCheck.risk,
     earningsDate: earningsCheck.date,
+    modelNotes: modelNotes(data, {
+      greeks,
+      structureNote: 'Butterfly/BWB/ratio risk math is simplified from strike geometry and net credit/debit. Validate complex leg quantities before relying on final risk.',
+    }),
   };
 }
 
@@ -691,6 +728,7 @@ export function analyzeDebitSpread(data, legs, expDateObj, dte, debit, prefs) {
     supports, resistances,
     earningsRisk: earningsCheck.risk,
     earningsDate: earningsCheck.date,
+    modelNotes: modelNotes(data, { greeks }),
   };
 }
 
@@ -766,5 +804,6 @@ export function analyzeLongOption(data, legs, expDateObj, dte, premium, prefs) {
     framingNote: isCall
       ? `Theoretical max profit is unlimited, but realistically: a 20% move in ${dte} days has ~${pct(targetData.allTargets?.find(t=>t.movePct===0.20)?.prob || 0.05)}% probability at current volatility.`
       : `Theoretical max profit requires stock to reach $0. Realistically: a 20% drop in ${dte} days has ~${pct(targetData.allTargets?.find(t=>t.movePct===0.20)?.prob || 0.05)}% probability.`,
+    modelNotes: modelNotes(data, { greeks }),
   };
 }

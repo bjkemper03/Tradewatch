@@ -109,33 +109,36 @@ function renderTrades() {
     var tags    = t.tags || [];
 
     var expanded = !!expandedTradeCards[t.id];
-    html += '<div class="tc ' + assess.cls + '">' +
-      '<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:9px">' +
-        '<div>' +
-          '<div style="display:flex;align-items:center;gap:7px;margin-bottom:2px">' +
+    html += '<div class="tc ' + assess.cls + '" style="' + (!expanded ? 'padding:0;overflow:hidden' : '') + '">' +
+      '<div onclick="toggleTradeDetails(' + jsArg(t.id) + ')" role="button" tabindex="0" ' +
+        'onkeydown="if(event.key===\'Enter\'||event.key===\' \'){event.preventDefault();toggleTradeDetails(' + jsArg(t.id) + ')}" ' +
+        'style="display:flex;justify-content:space-between;align-items:center;gap:10px;padding:' + (expanded ? '0 0 10px' : '12px 13px') + ';cursor:pointer;margin-bottom:' + (expanded ? '9px' : '0') + '">' +
+        '<div style="min-width:0;flex:1">' +
+          '<div style="display:flex;align-items:center;gap:7px;margin-bottom:2px;min-width:0;flex-wrap:wrap">' +
             '<span style="font-family:var(--mono);font-size:16px;font-weight:700">' + t.ticker + '</span>' +
             '<span style="font-size:9px;color:var(--text3);font-family:var(--mono)">' + (dte !== undefined ? dte + 'DTE' : '') + '</span>' +
             '<span class="badge" style="background:' + assess.color + '15;border:1px solid ' + assess.color + '25;color:' + assess.color + ';font-size:9px">' + assess.label + '</span>' +
             (sector ? '<span style="font-size:9px;color:var(--text3)">' + sector + '</span>' : '') +
           '</div>' +
-          '<div style="font-size:10px;color:var(--text3)">' + t.strategy + '</div>' +
-          '<div style="font-size:10px;color:var(--text2);margin-top:2px">Exp ' + t.expDate + '</div>' +
+          '<div style="font-size:10px;color:var(--text3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + t.strategy + (t.expDate ? ' · Exp ' + t.expDate : '') + '</div>' +
         '</div>' +
-        '<div style="text-align:right">' +
+        '<div style="text-align:right;display:flex;align-items:center;gap:10px;flex-shrink:0">' +
+          '<div>' +
           '<div style="font-family:var(--mono);font-size:16px;font-weight:700;color:' +
             (liveCushion >= prefs.cushionMin + 2 ? 'var(--green)' : liveCushion >= prefs.cushionMin ? 'var(--yellow)' : 'var(--red)') +
           '">' + liveCushion + '%</div>' +
           '<div style="font-size:9px;color:var(--text3)">cushion' + (lp ? ' live' : '') + '</div>' +
           '<div style="font-size:10px;color:var(--text2);font-family:var(--mono)">BE $' + (t.breakeven || '?') + '</div>' +
+          '</div>' +
+          '<div style="font-size:16px;color:var(--text3);line-height:1">' + (expanded ? '&#9650;' : '&#9660;') + '</div>' +
         '</div>' +
       '</div>' +
+      (expanded ? (
       '<div style="margin-bottom:9px;display:flex;flex-wrap:wrap">' +
         legs.map(function(l) {
           return '<span class="lb ' + (l.a === 'SELL' ? 'lb-sell' : 'lb-buy') + '">' + l.a + ' ' + l.n + '&times; $' + l.s + ' ' + l.t + '</span>';
         }).join('') +
       '</div>' +
-      '<button class="btn btn-ghost btn-sm" onclick="toggleTradeDetails(' + jsArg(t.id) + ')" style="margin-bottom:8px">' + (expanded ? 'Hide details' : 'Show details') + '</button>' +
-      (expanded ? (
       g3html([
         mc2('Price',      priceLabel || 'N/A',              lp ? 'var(--green)' : 'var(--text)'),
         mc2('Credit/shr', '$' + (t.creditReceived || '?'),  'var(--green)'),

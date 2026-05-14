@@ -128,6 +128,7 @@ export async function getPolygonHistory(ticker) {
     const closes = d.results.map(r => r.c);
     const highs  = d.results.map(r => r.h);
     const lows   = d.results.map(r => r.l);
+    const volumes = d.results.map(r => r.v || 0);
     const lastDate = new Date(d.results[0].t).toISOString().slice(0, 10);
 
     // SMAs
@@ -149,26 +150,95 @@ export async function getPolygonHistory(ticker) {
     const price5ago = closes.length > 5 ? closes[5] : closes[closes.length - 1];
     const perf5 = parseFloat(((closes[0] - price5ago) / price5ago * 100).toFixed(2));
 
-    // Support and resistance via swing highs/lows + SMAs
+    // Support and resistance via swing highs/lows + SMAs, scored for recency and confirmation.
     const rawPrice = closes[0];
-    const supports    = new Set([
-      Math.round(sma20 * 4) / 4,
-      Math.round(sma50 * 4) / 4,
-    ]);
-    const resistances = new Set();
+    const avgVol20 = volumes.slice(0, 20).reduce((a, b) => a + b, 0) / Math.max(1, Math.min(20, volumes.length));
+    const levelTol = Math.max(rawPrice * 0.0075, 0.25);
+    const candidates = [];
+
+    function roundedLevel(v) {
+      return Math.round(v * 4) / 4;
+    }
+
+    function addLevel(kind, price, source, idx) {
+      if (!price || price <= 0) return;
+      const level = roundedLevel(price);
+      const isSma = source.startsWith('sma');
+      const touches = closes
+        .slice(0, Math.min(90, closes.length))
+        .filter((_, j) => kind === 'support'
+          ? Math.abs(lows[j] - level) <= levelTol || Math.abs(closes[j] - level) <= levelTol
+          : Math.abs(highs[j] - level) <= levelTol || Math.abs(closes[j] - level) <= levelTol
+        ).length;
+      const newerCloses = closes.slice(0, Math.max(0, idx));
+      const broken = isSma
+        ? false
+        : kind === 'support'
+          ? newerCloses.some(c => c < level - levelTol)
+          : newerCloses.some(c => c > level + levelTol);
+      const retested = !isSma && touches >= 2 && !broken;
+      const freshDays = idx == null ? null : idx;
+      const volAtLevel = idx == null ? null : volumes[idx];
+      const volumeConfirmed = volAtLevel != null && avgVol20 > 0 ? volAtLevel >= avgVol20 * 1.15 : false;
+      const distancePct = parseFloat(((level - rawPrice) / rawPrice * 100).toFixed(1));
+      const recencyScore = freshDays == null ? 8 : Math.max(0, 30 - freshDays);
+      const score =
+        Math.max(0, 30 - Math.abs(distancePct) * 3) +
+        recencyScore +
+        Math.min(touches, 5) * 4 +
+        (retested ? 8 : 0) +
+        (volumeConfirmed ? 6 : 0) -
+        (broken ? 18 : 0) +
+        (isSma ? 4 : 0);
+
+      candidates.push({
+        kind,
+        price: level,
+        source,
+        freshDays,
+        touches,
+        broken,
+        retested,
+        volumeConfirmed,
+        distancePct,
+        score: parseFloat(score.toFixed(1)),
+      });
+    }
+
+    addLevel(sma20 < rawPrice ? 'support' : 'resistance', sma20, 'sma20', null);
+    addLevel(sma50 < rawPrice ? 'support' : 'resistance', sma50, 'sma50', null);
 
     for (let i = 2; i < Math.min(60, lows.length - 2); i++) {
       // Swing low = local support
       if (lows[i] < lows[i-1] && lows[i] < lows[i+1] &&
           lows[i] < lows[i-2] && lows[i] < lows[i+2]) {
-        supports.add(Math.round(lows[i] * 4) / 4);
+        addLevel('support', lows[i], 'swing', i);
       }
       // Swing high = local resistance
       if (highs[i] > highs[i-1] && highs[i] > highs[i+1] &&
           highs[i] > highs[i-2]) {
-        resistances.add(Math.round(highs[i] * 4) / 4);
+        addLevel('resistance', highs[i], 'swing', i);
       }
     }
+
+    function mergeLevels(kind) {
+      const sorted = candidates
+        .filter(l => l.kind === kind)
+        .filter(l => kind === 'support' ? l.price < rawPrice : l.price > rawPrice)
+        .sort((a, b) => b.score - a.score);
+      const merged = [];
+      for (const level of sorted) {
+        const existing = merged.find(l => Math.abs(l.price - level.price) <= levelTol);
+        if (!existing) merged.push(level);
+        else if (level.score > existing.score) Object.assign(existing, level);
+      }
+      return merged
+        .sort((a, b) => kind === 'support' ? b.price - a.price : a.price - b.price)
+        .slice(0, kind === 'support' ? 4 : 3);
+    }
+
+    const supportDetails = mergeLevels('support');
+    const resistanceDetails = mergeLevels('resistance');
 
     return {
       // Price (Polygon close -- may be slightly stale vs Tradier real-time)
@@ -177,6 +247,7 @@ export async function getPolygonHistory(ticker) {
       closes,   // full array for charting
       highs,
       lows,
+      volumes,
 
       // Technicals
       sma20:    parseFloat(sma20.toFixed(2)),
@@ -188,14 +259,10 @@ export async function getPolygonHistory(ticker) {
       perf5,
 
       // Key levels (filtered to relevant side of current price)
-      supports:    [...supports]
-                     .filter(s => s < rawPrice)
-                     .sort((a, b) => b - a)
-                     .slice(0, 4),
-      resistances: [...resistances]
-                     .filter(r => r > rawPrice)
-                     .sort((a, b) => a - b)
-                     .slice(0, 3),
+      supports:    supportDetails.map(l => l.price),
+      resistances: resistanceDetails.map(l => l.price),
+      supportDetails,
+      resistanceDetails,
     };
   } catch (e) {
     console.warn('[dataFetch] Polygon history failed:', e.message);
@@ -238,6 +305,8 @@ export async function fetchAllData(ticker, expFormatted) {
     above200:     history?.above200     || false,
     supports:     history?.supports     || [],
     resistances:  history?.resistances  || [],
+    supportDetails:    history?.supportDetails    || [],
+    resistanceDetails: history?.resistanceDetails || [],
     closes:       history?.closes       || [],
   };
 }

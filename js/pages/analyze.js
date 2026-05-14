@@ -172,6 +172,7 @@ async function runAnalysis() {
       wheelScenarios:d.wheelScenarios|| null,
       probWorthless: d.probWorthless || null,
       profitTargets: d.profitTargets || null,
+      modelNotes:    d.modelNotes    || [],
       notes:         $('az-ctx') ? $('az-ctx').value.trim() : '',
       issues:        d.issues        || []
     };
@@ -194,6 +195,7 @@ function renderGreekBox(d) {
   if (g.gamma != null) items.push(['Gamma', safeNum(g.gamma).toFixed(3)]);
   if (g.theta != null) items.push(['Theta', safeNum(g.theta).toFixed(3)]);
   if (g.vega != null)  items.push(['Vega',  safeNum(g.vega).toFixed(3)]);
+  if (g.rho != null)   items.push(['Rho',   safeNum(g.rho).toFixed(3)]);
   if (d.iv != null)    items.push(['IV',    d.iv + '%']);
   if (!items.length) return '';
   return '<div style="display:flex;gap:6px;flex-wrap:wrap;margin:8px 12px 10px">' +
@@ -211,6 +213,26 @@ function renderMetricGrid(metrics) {
     metrics.push(mc2('STRUCTURE', 'Defined', 'var(--text2)'));
   }
   return '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:0 12px 10px">' + metrics.join('') + '</div>';
+}
+
+function fmtMoney(v) {
+  if (v == null || !Number.isFinite(safeNum(v))) return 'N/A';
+  var n = safeNum(v);
+  return (n < 0 ? '-$' : '$') + Math.abs(n).toFixed(0);
+}
+
+function renderModelNotes(d) {
+  var notes = d.modelNotes || [];
+  if (!notes.length) return '';
+  return '<div style="display:flex;gap:6px;flex-wrap:wrap;margin:0 12px 10px">' +
+    notes.slice(0, 4).map(function(n) {
+      var isWeak = n.level === 'weak';
+      return '<span style="display:inline-flex;align-items:center;gap:6px;background:' + (isWeak ? 'var(--red-dim)' : 'var(--yellow-dim)') + ';border:1px solid ' + (isWeak ? 'rgba(239,68,68,.25)' : 'rgba(245,158,11,.25)') + ';border-radius:7px;padding:6px 8px;font-size:10px;line-height:1.35;color:' + (isWeak ? '#fca5a5' : 'var(--yellow)') + '">' +
+        '<strong style="font-size:9px;text-transform:uppercase;letter-spacing:.4px">' + (isWeak ? 'Weak estimate' : 'Model') + '</strong>' +
+        '<span style="color:var(--text2)">' + n.msg + '</span>' +
+      '</span>';
+    }).join('') +
+  '</div>';
 }
 
 function estimatePayoff(d, px) {
@@ -236,10 +258,19 @@ function estimatePayoff(d, px) {
 
 function renderPayoffShape(d) {
   if (!d.price) return '';
-  var low = d.price * 0.75, high = d.price * 1.25;
+  var strikes = (azLegData || []).map(function(l) { return safeNum(l.s); }).filter(function(s) { return s > 0; });
+  var beVals = [d.breakeven, d.lowerBE, d.upperBE, d.putBreakeven, d.callBreakeven]
+    .map(function(v) { return safeNum(v); })
+    .filter(function(v) { return v > 0; });
+  var anchorVals = strikes.concat(beVals).concat([d.price]);
+  var minAnchor = Math.min.apply(null, anchorVals);
+  var maxAnchor = Math.max.apply(null, anchorVals);
+  var span = Math.max(d.price * 0.18, maxAnchor - minAnchor, 1);
+  var low = Math.max(0.01, Math.min(d.price * 0.75, minAnchor - span * 0.35));
+  var high = Math.max(d.price * 1.25, maxAnchor + span * 0.35);
   var points = [];
-  for (var i = 0; i <= 24; i++) {
-    var px = low + (high - low) * i / 24;
+  for (var i = 0; i <= 48; i++) {
+    var px = low + (high - low) * i / 48;
     var pnl = estimatePayoff(d, px);
     if (pnl == null || !Number.isFinite(pnl)) return '';
     points.push({ px: px, pnl: pnl });
@@ -252,14 +283,63 @@ function renderPayoffShape(d) {
   function y(v) { return h - pad - (v - minY) / (maxY - minY) * (h - pad * 2); }
   var zeroY = y(0);
   var line = points.map(function(p) { return x(p).toFixed(1) + ',' + y(p.pnl).toFixed(1); }).join(' ');
+  function payoffAt(px) {
+    var v = estimatePayoff(d, px);
+    return v == null || !Number.isFinite(v) ? null : v;
+  }
+  function pointLabel(label, px, kind) {
+    if (!px || px < low || px > high) return null;
+    return { label: label, px: px, pnl: payoffAt(px), kind: kind || 'marker' };
+  }
+  var markers = [];
+  markers.push(pointLabel('Now', d.price, 'now'));
+  if (d.breakeven) markers.push(pointLabel('BE', safeNum(d.breakeven), 'be'));
+  if (d.lowerBE) markers.push(pointLabel('Lower BE', safeNum(d.lowerBE), 'be'));
+  if (d.upperBE) markers.push(pointLabel('Upper BE', safeNum(d.upperBE), 'be'));
+  if (d.putBreakeven) markers.push(pointLabel('Put BE', safeNum(d.putBreakeven), 'be'));
+  if (d.callBreakeven) markers.push(pointLabel('Call BE', safeNum(d.callBreakeven), 'be'));
+  (azLegData || []).forEach(function(leg) {
+    var label = (leg.a === 'SELL' ? 'Short ' : 'Long ') + (leg.t || '').slice(0, 1) + ' ' + leg.s;
+    markers.push(pointLabel(label, safeNum(leg.s), leg.a === 'SELL' ? 'short' : 'long'));
+  });
+  markers = markers.filter(Boolean).filter(function(m, idx, arr) {
+    return arr.findIndex(function(o) { return o.label === m.label && Math.abs(o.px - m.px) < 0.01; }) === idx;
+  });
+  var maxPoint = points.reduce(function(best, p) { return p.pnl > best.pnl ? p : best; }, points[0]);
+  var minPoint = points.reduce(function(best, p) { return p.pnl < best.pnl ? p : best; }, points[0]);
+  var checkpointRows = markers.slice(0, 8);
+  checkpointRows.push({ label:'Max profit zone', px:maxPoint.px, pnl:maxPoint.pnl, kind:'profit' });
+  checkpointRows.push({ label:'Max loss zone', px:minPoint.px, pnl:minPoint.pnl, kind:'loss' });
+  var markerSvg = markers.slice(0, 8).map(function(m, idx) {
+    var col = m.kind === 'now' ? 'var(--blue2)' : m.kind === 'be' ? 'var(--yellow)' : m.kind === 'short' ? '#fca5a5' : '#86efac';
+    var mx = x({ px: m.px });
+    var ty = idx % 2 ? h - 5 : 10;
+    return '<line x1="' + mx.toFixed(1) + '" y1="' + pad + '" x2="' + mx.toFixed(1) + '" y2="' + (h - pad) + '" stroke="' + col + '" stroke-width="1" stroke-dasharray="3 4" opacity=".75"/>' +
+      '<text x="' + mx.toFixed(1) + '" y="' + ty + '" text-anchor="middle" fill="' + col + '" font-size="6" font-family="monospace">' + m.label.replace(/ /g, '') + '</text>';
+  }).join('');
   return '<div class="card">' +
-    '<div style="font-size:10px;color:var(--text3);font-weight:600;text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px">P/L Shape at Expiration</div>' +
+    '<div style="display:flex;justify-content:space-between;gap:10px;align-items:center;margin-bottom:8px">' +
+      '<div style="font-size:10px;color:var(--text3);font-weight:600;text-transform:uppercase;letter-spacing:.5px">P/L Shape at Expiration</div>' +
+      '<div style="font-size:9px;color:var(--text3);font-family:var(--mono)">per contract</div>' +
+    '</div>' +
     '<svg viewBox="0 0 ' + w + ' ' + h + '" style="width:100%;height:140px;display:block;background:var(--surface2);border:1px solid var(--border);border-radius:8px">' +
       '<line x1="' + pad + '" y1="' + zeroY.toFixed(1) + '" x2="' + (w - pad) + '" y2="' + zeroY.toFixed(1) + '" stroke="var(--border2)" stroke-width="1"/>' +
-      '<line x1="' + x({px:d.price}).toFixed(1) + '" y1="' + pad + '" x2="' + x({px:d.price}).toFixed(1) + '" y2="' + (h-pad) + '" stroke="var(--blue2)" stroke-width="1" stroke-dasharray="4 4"/>' +
+      markerSvg +
       '<polyline points="' + line + '" fill="none" stroke="var(--green)" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>' +
     '</svg>' +
     '<div style="display:flex;justify-content:space-between;font-size:10px;color:var(--text3);margin-top:5px;font-family:var(--mono)"><span>$' + low.toFixed(0) + '</span><span>Now $' + d.price + '</span><span>$' + high.toFixed(0) + '</span></div>' +
+    '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(132px,1fr));gap:6px;margin-top:10px">' +
+      checkpointRows.map(function(m) {
+        var col = m.pnl >= 0 ? '#22c55e' : '#ef4444';
+        return '<div style="background:var(--surface2);border:1px solid var(--border);border-radius:7px;padding:7px 8px;min-width:0">' +
+          '<div style="font-size:9px;color:var(--text3);font-weight:700;text-transform:uppercase;letter-spacing:.4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + m.label + '</div>' +
+          '<div style="display:flex;justify-content:space-between;gap:8px;align-items:baseline;margin-top:3px;font-family:var(--mono)">' +
+            '<span style="font-size:11px;color:var(--text2)">$' + safeNum(m.px).toFixed(2) + '</span>' +
+            '<span style="font-size:12px;font-weight:800;color:' + col + '">' + fmtMoney(m.pnl) + '</span>' +
+          '</div>' +
+        '</div>';
+      }).join('') +
+    '</div>' +
   '</div>';
 }
 
@@ -267,13 +347,34 @@ function renderCompactLevels(d) {
   var supports = d.supports || [];
   var resistances = d.resistances || [];
   if (!supports.length && !resistances.length && !d.exitSignal && !d.sma20) return '';
+  function levelTags(level, kind) {
+    var list = kind === 'support' ? (d.supportDetails || []) : (d.resistanceDetails || []);
+    var detail = list.find(function(x) { return Math.abs(safeNum(x.price) - safeNum(level)) < 0.01; });
+    if (!detail) return '';
+    var tags = [];
+    if (detail.freshDays != null) tags.push(detail.freshDays + 'd');
+    if (detail.touches) tags.push(detail.touches + 'x');
+    if (detail.retested) tags.push('retest');
+    if (detail.volumeConfirmed) tags.push('vol');
+    if (detail.broken) tags.push('broken');
+    return tags.length ? '<div style="font-size:8px;color:var(--text3);font-family:var(--mono);margin-top:2px">' + tags.slice(0,3).join(' ') + '</div>' : '';
+  }
+  function levelHtml(list, kind) {
+    var col = kind === 'support' ? 'var(--green)' : 'var(--red)';
+    return list.slice(0, 3).map(function(p) {
+      return '<span style="display:inline-block;margin-right:12px;margin-bottom:4px">' +
+        '<span style="font-family:var(--mono);font-size:14px;color:' + col + ';font-weight:700">$' + p + '</span>' +
+        levelTags(p, kind) +
+      '</span>';
+    }).join('');
+  }
   return '<div class="card">' +
     '<div style="display:flex;justify-content:space-between;gap:12px;align-items:flex-start">' +
       '<div style="flex:1">' +
         '<div style="font-size:10px;color:var(--text3);font-weight:600;text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px">Key Levels</div>' +
         '<div style="display:flex;gap:18px;flex-wrap:wrap">' +
-          (supports.length ? '<div><div style="font-size:9px;color:var(--green);letter-spacing:1px;margin-bottom:4px">SUPPORT</div><div style="font-family:var(--mono);font-size:14px;color:var(--green);font-weight:700">' + supports.slice(0,3).map(function(p){return '$' + p;}).join(' / ') + '</div></div>' : '') +
-          (resistances.length ? '<div><div style="font-size:9px;color:var(--red);letter-spacing:1px;margin-bottom:4px">RESISTANCE</div><div style="font-family:var(--mono);font-size:14px;color:var(--red);font-weight:700">' + resistances.slice(0,3).map(function(p){return '$' + p;}).join(' / ') + '</div></div>' : '') +
+          (supports.length ? '<div><div style="font-size:9px;color:var(--green);letter-spacing:1px;margin-bottom:4px">SUPPORT</div><div>' + levelHtml(supports, 'support') + '</div></div>' : '') +
+          (resistances.length ? '<div><div style="font-size:9px;color:var(--red);letter-spacing:1px;margin-bottom:4px">RESISTANCE</div><div>' + levelHtml(resistances, 'resistance') + '</div></div>' : '') +
         '</div>' +
       '</div>' +
       (d.exitSignal ? '<div style="font-size:10px;color:#fca5a5;border:1px solid rgba(239,68,68,.2);background:var(--red-dim);border-radius:7px;padding:7px 9px;white-space:nowrap">Exit below $' + d.exitSignal + '</div>' : '') +
@@ -310,6 +411,7 @@ function renderAnalysisResult(d) {
     '</div>' +
   '</div>';
   html += renderGreekBox(d);
+  html += renderModelNotes(d);
 
   // ── Metrics grid ─────────────────────────────────────────────────────────
   var metrics = [];
@@ -323,7 +425,8 @@ function renderAnalysisResult(d) {
     if (d.crWidthPct != null)   metrics.push(mc2('CR/WIDTH',     d.crWidthPct + '%',              d.crWidthPct >= prefs.creditWidthMin ? '#22c55e' : '#f59e0b'));
     if (d.maxProfit != null)    metrics.push(mc2('MAX PROFIT',   '$' + d.maxProfit.toFixed(0),    '#22c55e'));
     if (d.maxLoss != null)      metrics.push(mc2('MAX LOSS',     '$' + d.maxLoss.toFixed(0),      '#ef4444'));
-    if (d.probWorthless != null)metrics.push(mc2('PROB WORTHLESS', Math.round(d.probWorthless * 100) + '%', '#22c55e'));
+    if (d.probWorthless != null)metrics.push(mc2('EXP WORTHLESS', Math.round(d.probWorthless * 100) + '%', '#22c55e'));
+    if (d.probTouchShort != null)metrics.push(mc2('TOUCH SHORT', Math.round(d.probTouchShort * 100) + '%', '#f59e0b'));
   }
   if (sg === 'iron_condor' || sg === 'iron_butterfly') {
     if (d.putCushionPct != null)  metrics.push(mc2('PUT CUSHION',     d.putCushionPct + '%',           cushC(d.putCushionPct)));
@@ -332,7 +435,8 @@ function renderAnalysisResult(d) {
     if (d.callBreakeven != null)  metrics.push(mc2('CALL BE',         '$' + d.callBreakeven,           'var(--text)'));
     if (d.maxProfit != null)      metrics.push(mc2('MAX PROFIT',      '$' + d.maxProfit.toFixed(0),    '#22c55e'));
     if (d.maxLoss != null)        metrics.push(mc2('MAX LOSS',        '$' + d.maxLoss.toFixed(0),      '#ef4444'));
-    if (d.probMaxProfit != null)  metrics.push(mc2('PROB MAX PROFIT', Math.round(d.probMaxProfit * 100) + '%', '#f59e0b'));
+    if (d.probMaxProfit != null)  metrics.push(mc2('EXP MAX PROFIT', Math.round(d.probMaxProfit * 100) + '%', '#f59e0b'));
+    if (d.probAnyProfit != null)  metrics.push(mc2('EXP PROFIT',     Math.round(d.probAnyProfit * 100) + '%', '#22c55e'));
   }
   if (sg === 'bwb' || sg === 'butterfly' || sg === 'ratio_spread') {
     if (d.lowerBE != null)      metrics.push(mc2('LOWER BE',    '$' + d.lowerBE,              'var(--text)'));
@@ -340,8 +444,8 @@ function renderAnalysisResult(d) {
     if (d.maxProfit != null)    metrics.push(mc2('MAX PROFIT',  '$' + d.maxProfit.toFixed(0), '#22c55e'));
     if (d.maxLoss != null)      metrics.push(mc2('MAX LOSS',    '$' + d.maxLoss.toFixed(0),   '#ef4444'));
     if (d.crRatio != null)      metrics.push(mc2('CR/RISK',     d.crRatio + '%',              d.crRatio >= 20 ? '#22c55e' : d.crRatio >= 12 ? '#f59e0b' : '#ef4444'));
-    if (d.probMaxProfit != null)metrics.push(mc2('PROB MAX',    Math.round(d.probMaxProfit * 100) + '%', '#f59e0b'));
-    if (d.probAnyProfit != null)metrics.push(mc2('PROB PROFIT', Math.round(d.probAnyProfit * 100) + '%', '#22c55e'));
+    if (d.probMaxProfit != null)metrics.push(mc2('EXP MAX',    Math.round(d.probMaxProfit * 100) + '%', '#f59e0b'));
+    if (d.probAnyProfit != null)metrics.push(mc2('EXP PROFIT', Math.round(d.probAnyProfit * 100) + '%', '#22c55e'));
   }
   if (sg === 'put_debit_spread' || sg === 'call_debit_spread') {
     if (d.breakeven != null)    metrics.push(mc2('BREAKEVEN',   '$' + d.breakeven,            'var(--text)'));
@@ -349,12 +453,12 @@ function renderAnalysisResult(d) {
     if (d.maxProfit != null)    metrics.push(mc2('MAX PROFIT',  '$' + d.maxProfit.toFixed(0), '#22c55e'));
     if (d.maxLoss != null)      metrics.push(mc2('MAX LOSS',    '$' + d.maxLoss.toFixed(0),   '#ef4444'));
     if (d.riskReward != null)   metrics.push(mc2('RISK/REWARD', d.riskReward + ':1',          d.riskReward < 1 ? '#22c55e' : d.riskReward < 2 ? '#f59e0b' : '#ef4444'));
-    if (d.probAnyProfit != null)metrics.push(mc2('PROB PROFIT', Math.round(d.probAnyProfit * 100) + '%', '#22c55e'));
+    if (d.probAnyProfit != null)metrics.push(mc2('EXP PROFIT', Math.round(d.probAnyProfit * 100) + '%', '#22c55e'));
   }
   if (sg === 'long_call' || sg === 'long_put') {
     if (d.breakeven != null)    metrics.push(mc2('BREAKEVEN',     '$' + d.breakeven,                         'var(--text)'));
     if (d.maxLoss != null)      metrics.push(mc2('MAX LOSS',      '$' + d.maxLoss.toFixed(0),               '#ef4444'));
-    if (d.probWorthless != null)metrics.push(mc2('PROB WORTHLESS',Math.round(d.probWorthless * 100) + '%',  '#ef4444'));
+    if (d.probWorthless != null)metrics.push(mc2('EXP WORTHLESS',Math.round(d.probWorthless * 100) + '%',  '#ef4444'));
     if (d.dailyDecay != null)   metrics.push(mc2('DAILY DECAY',   '~$' + (d.dailyDecay * 100).toFixed(2),  '#f59e0b'));
   }
 
@@ -445,7 +549,8 @@ function renderAnalysisResult(d) {
         '</div>' +
         '<div style="text-align:right">' +
           '<div style="font-size:12px;font-weight:700;color:#22c55e">+$' + safeNum(t.profitDollars != null ? t.profitDollars : t.profit * 100).toFixed(0) + '</div>' +
-          '<div style="font-size:10px;color:var(--text3)">' + probPct + '% chance</div>' +
+          '<div style="font-size:10px;color:var(--text3)">Exp ' + probPct + '%</div>' +
+          (t.probTouch != null ? '<div style="font-size:10px;color:var(--yellow)">Touch ' + Math.round(t.probTouch * 100) + '%</div>' : '') +
         '</div>' +
       '</div>';
     });
