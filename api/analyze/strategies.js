@@ -45,6 +45,37 @@ function bsDelta(S, K, T, vol, type) {
   const d1 = (Math.log(S / K) + 0.5 * vol * vol * T) / (vol * Math.sqrt(T));
   return type === 'call' ? ncdf(d1) : ncdf(d1) - 1;
 }
+function npdf(x) {
+  return Math.exp(-0.5 * x * x) / Math.sqrt(2 * Math.PI);
+}
+function bsGreekSet(S, K, T, vol, type) {
+  if (!S || !K || !T || !vol || T <= 0 || vol <= 0) return null;
+  const sqrtT = Math.sqrt(T);
+  const d1 = (Math.log(S / K) + 0.5 * vol * vol * T) / (vol * sqrtT);
+  const d2 = d1 - vol * sqrtT;
+  const isCall = type === 'call';
+  const delta = isCall ? ncdf(d1) : ncdf(d1) - 1;
+  const gamma = npdf(d1) / (S * vol * sqrtT);
+  const theta = (-(S * npdf(d1) * vol) / (2 * sqrtT)) / 365;
+  const vega = S * npdf(d1) * sqrtT / 100;
+  const rho = (isCall ? K * T * ncdf(d2) : -K * T * ncdf(-d2)) / 100;
+  return {
+    delta: parseFloat(delta.toFixed(4)),
+    gamma: parseFloat(gamma.toFixed(4)),
+    theta: parseFloat(theta.toFixed(4)),
+    vega: parseFloat(vega.toFixed(4)),
+    rho: parseFloat(rho.toFixed(4)),
+  };
+}
+
+function completeGreeks(greeks, S, K, T, vol, type) {
+  const fallback = bsGreekSet(S, K, T, vol, type);
+  if (!fallback && !greeks) return null;
+  return {
+    ...(fallback || {}),
+    ...(greeks || {}),
+  };
+}
 
 // Get best available volatility -- IV from chain preferred, HV30 fallback
 function getBestVol(greeks, hv30) {
@@ -443,13 +474,14 @@ export function analyzeCSP(data, legs, expDateObj, dte, credit, prefs) {
   if (!strike) return { error: 'Enter the put strike price' };
 
   const contract = findChainContract(chain, strike, 'put');
-  const greeks   = extractGreeks(contract);
-  const vol      = getBestVol(greeks, hv30);
+  const rawGreeks = extractGreeks(contract);
+  const vol      = getBestVol(rawGreeks, hv30);
+  const greeks   = completeGreeks(rawGreeks, price, strike, dte / 365, vol, 'put');
 
   let absDelta = null, deltaSource = 'BS';
   if (greeks?.delta != null) {
     absDelta = Math.abs(greeks.delta);
-    deltaSource = 'Tradier';
+    deltaSource = rawGreeks?.delta != null ? 'Tradier' : 'BS';
   } else if (dte) {
     const bd = bsDelta(price, strike, dte / 365, vol, 'put');
     if (bd !== null) { absDelta = Math.abs(bd); }
@@ -459,6 +491,14 @@ export function analyzeCSP(data, legs, expDateObj, dte, credit, prefs) {
     { label: 'Put strike', px: strike, note: 'Short put expires worthless above here', kind: 'short' },
     { label: 'Stock $0', px: 0, note: 'Theoretical worst case', kind: 'loss' },
   ]);
+  const cspNowPnl = parseFloat(((cr - Math.max(0, strike - price)) * 100).toFixed(2));
+  const cspBreakeven = firstBreakeven(payoff, parseFloat((strike - cr).toFixed(2)));
+  payoff.checkpoints = [
+    { label: 'Now', px: price, pnl: cspNowPnl, note: '', kind: 'now' },
+    { label: 'Breakeven', px: cspBreakeven, pnl: 0, note: 'P/L is about $0', kind: 'be' },
+    { label: `Max profit $${strike}+`, px: strike, pnl: payoff.maxProfit, note: 'Put expires worthless at or above strike', kind: 'profit' },
+    { label: 'Max loss $0', px: 0, pnl: payoff.maxLoss != null ? -payoff.maxLoss : null, note: 'Theoretical if stock goes to $0', kind: 'loss' },
+  ];
   const collateral   = strike * 100;
   const maxProfit    = payoff.maxProfit;
   const maxLoss      = payoff.maxLoss;
@@ -466,6 +506,8 @@ export function analyzeCSP(data, legs, expDateObj, dte, credit, prefs) {
   const cushionPct   = parseFloat(((price - strike) / price * 100).toFixed(1));
   const beCushionPct = parseFloat(((price - breakeven) / price * 100).toFixed(1));
   const em           = calcExpectedMove(price, vol, dte);
+  const dailyDecay   = greeks?.theta != null ? parseFloat((-greeks.theta).toFixed(4)) : null;
+  const dailyThetaDollars = dailyDecay != null ? parseFloat((dailyDecay * 100).toFixed(2)) : null;
 
   // Wheel scenarios
   const wheelData = calcWheelScenarios(price, strike, cr, dte, 'put');
@@ -506,6 +548,8 @@ export function analyzeCSP(data, legs, expDateObj, dte, credit, prefs) {
     iv: greeks?.iv || null,
     vol: pct(vol),
     em,
+    dailyDecay,
+    dailyThetaDollars,
 
     // Wheel context
     wheelScenarios: wheelData,

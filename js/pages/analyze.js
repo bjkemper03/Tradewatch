@@ -223,10 +223,8 @@ function renderGreekBox(d) {
 }
 
 function renderMetricGrid(metrics) {
-  if (metrics.length % 2 === 1) {
-    metrics.push(mc2('STRUCTURE', 'Defined', 'var(--text2)'));
-  }
-  return '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:0 12px 10px">' + metrics.join('') + '</div>';
+  var items = metrics.slice();
+  return '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:8px;margin:0 12px 10px">' + items.join('') + '</div>';
 }
 
 function fmtMoney(v) {
@@ -238,6 +236,14 @@ function fmtMoney(v) {
 function fmtRiskMoney(v, unlimited) {
   if (unlimited) return 'Unlimited';
   return fmtMoney(v);
+}
+
+function fmtAsOf(v) {
+  if (!v) return '';
+  var n = Number(v);
+  var dt = Number.isFinite(n) && String(v).length >= 10 ? new Date(n) : new Date(v);
+  if (isNaN(dt.getTime())) return '';
+  return dt.toLocaleDateString(undefined, { month:'short', day:'numeric' });
 }
 
 function renderModelNotes(d) {
@@ -527,7 +533,7 @@ function renderTradeContext(d) {
     '<div style="font-size:10px;color:var(--text3);font-weight:600;text-transform:uppercase;letter-spacing:.5px;margin-bottom:10px">Trade Context</div>' +
     '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:8px;margin-bottom:10px">' +
       (d.em != null ? mini('Expected move', '&plusmn;$' + d.em, '#f59e0b', 'One-volatility move by expiration') : '') +
-      (d.dailyDecay != null ? mini('Est daily decay', '~$' + (d.dailyDecay * 100).toFixed(2), '#f59e0b', 'Approx option value decay per day') : '') +
+      (d.dailyDecay != null || d.dailyThetaDollars != null ? mini('Est daily decay', '~$' + (d.dailyThetaDollars != null ? safeNum(d.dailyThetaDollars).toFixed(2) : (d.dailyDecay * 100).toFixed(2)), '#f59e0b', 'Approx option value decay per day') : '') +
       probTiles +
       (d.exitSignal ? mini('Exit trigger', '$' + d.exitSignal, '#fca5a5', 'Stock price break level') : '') +
     '</div>' +
@@ -568,7 +574,7 @@ function renderAnalysisResult(d) {
           return '<span style="color:' + col + '">' + r + '</span>';
         }).join('<br>') +
       '</div>' +
-      (d.lastDate ? '<div style="font-size:9px;color:var(--text3);margin-top:4px">Price as of ' + d.lastDate + '</div>' : '') +
+      (fmtAsOf(d.lastDate) ? '<div style="font-size:9px;color:var(--text3);margin-top:4px">Quote as of ' + fmtAsOf(d.lastDate) + '</div>' : '') +
     '</div>' +
   '</div>';
   html += renderGreekBox(d);
@@ -577,7 +583,7 @@ function renderAnalysisResult(d) {
   var metrics = [];
   var sg = d.strategyGroup || '';
 
-  metrics.push(mc2('LIVE PRICE', d.price ? '$' + d.price : 'N/A', 'var(--text)'));
+  metrics.push(mc2('LIVE PRICE', d.price ? '$' + safeNum(d.price).toFixed(2) : 'N/A', 'var(--text)'));
 
   if (sg === 'credit_spread' || sg === 'csp' || sg === 'covered_call') {
     if (d.cushionPct != null)   metrics.push(mc2('CUSHION',      d.cushionPct + '%',              cushC(d.cushionPct)));
@@ -585,6 +591,10 @@ function renderAnalysisResult(d) {
     if (d.crWidthPct != null)   metrics.push(mc2('CR/WIDTH',     d.crWidthPct + '%',              d.crWidthPct >= prefs.creditWidthMin ? '#22c55e' : '#f59e0b'));
     if (d.maxProfit != null || d.maxProfitUnlimited) metrics.push(mc2('MAX PROFIT', fmtRiskMoney(d.maxProfit, d.maxProfitUnlimited), '#22c55e'));
     if (d.maxLoss != null || d.maxLossUnlimited)     metrics.push(mc2('MAX LOSS',   fmtRiskMoney(d.maxLoss, d.maxLossUnlimited),     '#ef4444'));
+    if (d.dailyDecay != null || d.dailyThetaDollars != null) {
+      var thetaDollars = d.dailyThetaDollars != null ? safeNum(d.dailyThetaDollars) : safeNum(d.dailyDecay) * 100;
+      metrics.push(mc2('DAILY THETA', '$' + thetaDollars.toFixed(2), thetaDollars >= 0 ? '#22c55e' : '#ef4444'));
+    }
   }
   if (sg === 'iron_condor' || sg === 'iron_butterfly') {
     if (d.putCushionPct != null)  metrics.push(mc2('PUT CUSHION',     d.putCushionPct + '%',           cushC(d.putCushionPct)));
