@@ -38,9 +38,6 @@ function cacheClear(prefix) {
 // ---------------------------------------------------------------------------
 function saveTrades() {
   localStorage.setItem(TK, JSON.stringify(trades));
-  if (_sbClient && currentUser) {
-    saveUserSettings({ ...prefs }).catch(e => console.warn('[OP] saveTrades settings sync failed:', e));
-  }
 }
 
 function saveHist() {
@@ -133,14 +130,16 @@ async function saveUserSettings(settings) {
 // Trades
 // ---------------------------------------------------------------------------
 async function getTrades(statusFilter = null) {
+  const user = await getCurrentUser();
   let query = sb()
     .from('trades')
     .select('*')
     .order('opened_at', { ascending: false });
+  if (user) query = query.eq('user_id', user.id);
   if (statusFilter) query = query.eq('status', statusFilter);
   const { data, error } = await query;
   if (error) throw error;
-  return data || [];
+  return (data || []).map(normalizeTrade);
 }
 
 async function getOpenTrades() {
@@ -161,49 +160,126 @@ async function saveTrade(trade) {
   const user = await getCurrentUser();
   if (!user) throw new Error('Not authenticated');
 
+  const payload = buildTradePayload(trade, user.id);
+
+  if (trade.id && !isLocalTradeId(trade.id)) {
+    const { data, error } = await sb()
+      .from('trades')
+      .update(payload)
+      .eq('id', trade.id)
+      .eq('user_id', user.id)
+      .select()
+      .single();
+    if (error) throw error;
+    return normalizeTrade(data);
+  }
+
+  const { data, error } = await sb()
+    .from('trades')
+    .insert(payload)
+    .select()
+    .single();
+  if (error) throw error;
+  return normalizeTrade(data);
+}
+
+function isLocalTradeId(id) {
+  return typeof id === 'number' || /^\d{10,}$/.test(String(id || ''));
+}
+
+function appTradeFields(trade) {
+  return {
+    dteOpen:        trade.dteOpen ?? trade.dte ?? '',
+    creditReceived:trade.creditReceived ?? trade.credit ?? '',
+    maxRisk:       trade.maxRisk ?? trade.maxLoss ?? '',
+    stockAtOpen:   trade.stockAtOpen ?? trade.openPrice ?? '',
+    exitSignal:    trade.exitSignal || '',
+    breakeven:     trade.breakeven ?? null,
+    cushionPct:    trade.cushionPct ?? null,
+    currentPnlPct: trade.currentPnlPct ?? '',
+    closeReason:   trade.closeReason || trade.exit_reason || '',
+    closeDate:     trade.closeDate || '',
+    sector:        trade.sector || null
+  };
+}
+
+function buildTradePayload(trade, userId) {
+  const app = appTradeFields(trade);
+  const analysis = {
+    ...(trade.analysis || {}),
+    app
+  };
   const payload = {
-    user_id:      user.id,
+    user_id:      userId,
     ticker:       trade.ticker,
     strategy:     trade.strategy,
     status:       trade.status || 'OPEN',
     legs:         trade.legs || [],
     exp_date:     trade.expDate || null,
-    dte_entry:    trade.dte || null,
-    credit:       trade.credit || null,
+    dte_entry:    safeNum(app.dteOpen, null),
+    credit:       safeNum(app.creditReceived, null),
     debit:        trade.debit || null,
     contracts:    trade.contracts || 1,
     spread_width: trade.spreadWidth || null,
     max_profit:   trade.maxProfit || null,
-    max_loss:     trade.maxLoss || null,
-    open_price:   trade.openPrice || null,
+    max_loss:     safeNum(app.maxRisk, null),
+    open_price:   safeNum(app.stockAtOpen, null),
     tags:         trade.tags || [],
     notes:        trade.notes || null,
-    analysis:     trade.analysis || {},
+    analysis:     analysis,
   };
-
-  if (trade.id) {
-    // Update existing
-    const { data, error } = await sb()
-      .from('trades')
-      .update(payload)
-      .eq('id', trade.id)
-      .select()
-      .single();
-    if (error) throw error;
-    return data;
-  } else {
-    // Insert new
-    const { data, error } = await sb()
-      .from('trades')
-      .insert(payload)
-      .select()
-      .single();
-    if (error) throw error;
-    return data;
+  if ((trade.status || '').toUpperCase() === 'CLOSED') {
+    payload.realized_pnl = safeNum(trade.realizedPnl, null);
+    payload.exit_reason = app.closeReason || null;
+    payload.closed_at = trade.closed_at || (app.closeDate ? app.closeDate + 'T12:00:00' : new Date().toISOString());
   }
+  return payload;
+}
+
+function normalizeTrade(raw) {
+  if (!raw) return raw;
+  const app = (raw.analysis && raw.analysis.app) || {};
+  const closedDate = raw.closeDate || app.closeDate || (raw.closed_at ? String(raw.closed_at).slice(0, 10) : '');
+  return {
+    id:             raw.id,
+    ticker:         raw.ticker,
+    strategy:       raw.strategy,
+    legs:           raw.legs || [],
+    expDate:        raw.expDate ?? raw.exp_date ?? '',
+    dteOpen:        raw.dteOpen ?? app.dteOpen ?? (raw.dte_entry != null ? String(raw.dte_entry) : ''),
+    creditReceived: raw.creditReceived ?? app.creditReceived ?? (raw.credit != null ? String(raw.credit) : ''),
+    maxRisk:        raw.maxRisk ?? app.maxRisk ?? (raw.max_loss != null ? String(raw.max_loss) : ''),
+    stockAtOpen:    raw.stockAtOpen ?? app.stockAtOpen ?? (raw.open_price != null ? String(raw.open_price) : ''),
+    exitSignal:     raw.exitSignal ?? app.exitSignal ?? '',
+    notes:          raw.notes || '',
+    openDate:       raw.openDate || (raw.opened_at ? String(raw.opened_at).slice(0, 10) : ''),
+    breakeven:      raw.breakeven ?? app.breakeven ?? null,
+    cushionPct:     raw.cushionPct ?? app.cushionPct ?? null,
+    status:         raw.status || 'OPEN',
+    currentPnlPct:  raw.currentPnlPct ?? app.currentPnlPct ?? '',
+    closeReason:    raw.closeReason ?? app.closeReason ?? raw.exit_reason ?? '',
+    closeDate:      closedDate,
+    realizedPnl:    raw.realizedPnl ?? raw.realized_pnl ?? null,
+    tags:           raw.tags || [],
+    sector:         raw.sector ?? app.sector ?? null,
+    analysis:       raw.analysis || {}
+  };
+}
+
+async function persistTrade(trade) {
+  saveTrades();
+  if (!_sbClient || !currentUser) return trade;
+  const saved = await saveTrade(trade);
+  const idx = trades.findIndex(t => t.id === trade.id);
+  if (idx >= 0) trades[idx] = saved;
+  else trades.unshift(saved);
+  saveTrades();
+  return saved;
 }
 
 async function closeTrade(id, { closePrice, realizedPnl, exitReason }) {
+  const user = await getCurrentUser();
+  if (!user) throw new Error('Not authenticated');
   const { data, error } = await sb()
     .from('trades')
     .update({
@@ -214,17 +290,21 @@ async function closeTrade(id, { closePrice, realizedPnl, exitReason }) {
       closed_at:    new Date().toISOString(),
     })
     .eq('id', id)
+    .eq('user_id', user.id)
     .select()
     .single();
   if (error) throw error;
-  return data;
+  return normalizeTrade(data);
 }
 
 async function deleteTrade(id) {
+  const user = await getCurrentUser();
+  if (!user) throw new Error('Not authenticated');
   const { error } = await sb()
     .from('trades')
     .delete()
-    .eq('id', id);
+    .eq('id', id)
+    .eq('user_id', user.id);
   if (error) throw error;
 }
 

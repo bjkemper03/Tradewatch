@@ -325,7 +325,7 @@ function toggleTag(i, tag) {
 // ---------------------------------------------------------------------------
 // Submit new trade
 // ---------------------------------------------------------------------------
-function submitTrade() {
+async function submitTrade() {
   var ticker = $('tf-tk') ? $('tf-tk').value.trim().toUpperCase() : '';
   if (!ticker) { alert('Enter a ticker'); return; }
   var stock      = safeNum($('tf-px')  ? $('tf-px').value  : 0);
@@ -342,7 +342,7 @@ function submitTrade() {
   var dte        = calcDTE(expRaw);
   var sector     = TICKER_SECTOR[ticker] || null;
 
-  trades.unshift({
+  var newTrade = {
     id:             Date.now(),
     ticker:         ticker,
     strategy:       formStrat,
@@ -362,36 +362,85 @@ function submitTrade() {
     closeReason:    '',
     tags:           selectedTags.slice(),
     sector:         sector
-  });
+  };
 
+  trades.unshift(newTrade);
   saveTrades();
-  toast('Trade logged!');
+  toast('Trade logged. Syncing...');
   selectedTags = [];
   renderTrades();
+
+  try {
+    await persistTrade(newTrade);
+    renderTrades();
+    toast('Trade saved to Supabase');
+  } catch(e) {
+    console.warn('[OP] Trade Supabase save failed:', e);
+    toast('Trade saved locally. Supabase sync failed.');
+  }
 }
 
 // ---------------------------------------------------------------------------
 // Trade actions
 // ---------------------------------------------------------------------------
-function updPnl(id, v) {
+async function updPnl(id, v) {
   var t = trades.find(function(t) { return t.id === id; });
-  if (t) { t.currentPnlPct = v; saveTrades(); }
+  if (t) {
+    t.currentPnlPct = v;
+    saveTrades();
+    try {
+      await persistTrade(t);
+    } catch(e) {
+      console.warn('[OP] P&L Supabase save failed:', e);
+      toast('P&L saved locally. Supabase sync failed.');
+    }
+  }
 }
 
-function closeT(id, r) {
+function estimateRealizedPnl(t) {
+  if (t.realizedPnl != null && t.realizedPnl !== '') return safeNum(t.realizedPnl);
+  var cr = safeNum(t.creditReceived || t.credit || 0);
+  var pct = safeNum(t.currentPnlPct || 0);
+  var contracts = safeNum(t.contracts || 0);
+  if (!contracts) {
+    var legs = t.legs || [];
+    contracts = legs.reduce(function(max, leg) {
+      return Math.max(max, safeNum(leg.n || 1));
+    }, 1);
+  }
+  return cr * 100 * contracts * pct / 100;
+}
+
+async function closeT(id, r) {
   var t = trades.find(function(t) { return t.id === id; });
   if (t) {
     t.status      = 'CLOSED';
     t.closeReason = r;
     t.closeDate   = new Date().toISOString().slice(0, 10);
+    t.realizedPnl = estimateRealizedPnl(t);
     saveTrades();
     renderTrades();
-    toast(t.ticker + ' closed -- ' + r);
+    toast(t.ticker + ' closed. Syncing...');
+    try {
+      await persistTrade(t);
+      renderTrades();
+      toast(t.ticker + ' closed -- ' + r);
+    } catch(e) {
+      console.warn('[OP] Close trade Supabase save failed:', e);
+      toast(t.ticker + ' closed locally. Supabase sync failed.');
+    }
   }
 }
 
-function delT(id) {
+async function delT(id) {
   if (confirm('Delete this trade?')) {
+    try {
+      if (!isLocalTradeId(id) && _sbClient && currentUser) await deleteTrade(id);
+    } catch(e) {
+      console.warn('[OP] Delete trade Supabase failed:', e);
+      toast('Delete failed in Supabase.');
+      return;
+    }
     trades = trades.filter(function(t) { return t.id !== id; });
     saveTrades();
     renderTrades();
