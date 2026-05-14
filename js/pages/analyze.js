@@ -224,7 +224,7 @@ function renderGreekBox(d) {
 
 function renderMetricGrid(metrics) {
   var items = metrics.slice();
-  return '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:8px;margin:0 12px 10px">' + items.join('') + '</div>';
+  return '<div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin:0 12px 10px">' + items.join('') + '</div>';
 }
 
 function fmtMoney(v) {
@@ -591,10 +591,6 @@ function renderAnalysisResult(d) {
     if (d.crWidthPct != null)   metrics.push(mc2('CR/WIDTH',     d.crWidthPct + '%',              d.crWidthPct >= prefs.creditWidthMin ? '#22c55e' : '#f59e0b'));
     if (d.maxProfit != null || d.maxProfitUnlimited) metrics.push(mc2('MAX PROFIT', fmtRiskMoney(d.maxProfit, d.maxProfitUnlimited), '#22c55e'));
     if (d.maxLoss != null || d.maxLossUnlimited)     metrics.push(mc2('MAX LOSS',   fmtRiskMoney(d.maxLoss, d.maxLossUnlimited),     '#ef4444'));
-    if (d.dailyDecay != null || d.dailyThetaDollars != null) {
-      var thetaDollars = d.dailyThetaDollars != null ? safeNum(d.dailyThetaDollars) : safeNum(d.dailyDecay) * 100;
-      metrics.push(mc2('DAILY THETA', '$' + thetaDollars.toFixed(2), thetaDollars >= 0 ? '#22c55e' : '#ef4444'));
-    }
   }
   if (sg === 'iron_condor' || sg === 'iron_butterfly') {
     if (d.putCushionPct != null)  metrics.push(mc2('PUT CUSHION',     d.putCushionPct + '%',           cushC(d.putCushionPct)));
