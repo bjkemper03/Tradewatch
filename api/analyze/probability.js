@@ -218,13 +218,14 @@ export function calcLongOptionTargets(price, strike, premium, vol, dte, optionTy
       targetPrice: parseFloat(targetPrice.toFixed(2)),
       intrinsic:  parseFloat(intrinsic.toFixed(2)),
       profit:     parseFloat(profit.toFixed(2)),
+      profitDollars: parseFloat((profit * 100).toFixed(0)),
       profitPct,
       prob:       probHitting,
     };
   });
 
   // Filter to only show profitable targets
-  const profitableTargets = targets.filter(t => t.profit > 0);
+  const profitableTargets = targets.filter(t => t.profit > 0 && (t.prob || 0) >= 0.005);
 
   // Theta warning -- daily decay estimate (rough)
   // Using simplified: theta ≈ -(premium * vol) / (2 * sqrt(T)) / 365
@@ -273,7 +274,7 @@ export function calcWheelScenarios(price, strike, credit, dte, optionType) {
     const breakeven          = effectiveCostBasis;
     const cushionPct         = parseFloat(((price - breakeven) / price * 100).toFixed(1));
     const collateral         = strike * 100;
-    const yieldData          = calcYield(credit, collateral, dte);
+    const yieldData          = calcYield(credit * 100, collateral, dte);
 
     return {
       // If assigned: you buy shares at effective cost basis
@@ -298,7 +299,7 @@ export function calcWheelScenarios(price, strike, credit, dte, optionType) {
   } else {
     // Covered call scenarios
     const collateral = price * 100; // approx -- shares already owned
-    const yieldData  = calcYield(credit, price, dte); // yield vs stock price
+    const yieldData  = calcYield(credit * 100, price * 100, dte); // yield vs stock value
     const downside   = parseFloat((price - credit).toFixed(2)); // effective downside protection
 
     return {

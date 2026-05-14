@@ -2,6 +2,12 @@
 // js/pages/trades.js -- Trades page
 // =============================================================================
 
+var expandedTradeCards = {};
+
+function jsArg(v) {
+  return '\'' + String(v).replace(/\\/g, '\\\\').replace(/'/g, "\\'") + '\'';
+}
+
 // ---------------------------------------------------------------------------
 // Live price loader
 // ---------------------------------------------------------------------------
@@ -95,23 +101,25 @@ function renderTrades() {
     var priceLabel = lp ? ('$' + curPx + ' live') : (t.stockAtOpen ? '$' + t.stockAtOpen + ' open' : null);
     var be         = safeNum(t.breakeven);
     var liveCushion = curPx > 0 && be > 0
-      ? parseFloat(((curPx - be) / curPx * 100).toFixed(1))
+      ? calcTradeCushion(t, curPx, be)
       : safeNum(t.cushionPct);
     var assess  = assessTrade(liveCushion, dte);
     var pnl     = safeNum(t.currentPnlPct);
     var sector  = TICKER_SECTOR[t.ticker] || null;
     var tags    = t.tags || [];
 
+    var expanded = !!expandedTradeCards[t.id];
     html += '<div class="tc ' + assess.cls + '">' +
       '<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:9px">' +
         '<div>' +
           '<div style="display:flex;align-items:center;gap:7px;margin-bottom:2px">' +
             '<span style="font-family:var(--mono);font-size:16px;font-weight:700">' + t.ticker + '</span>' +
+            '<span style="font-size:9px;color:var(--text3);font-family:var(--mono)">' + (dte !== undefined ? dte + 'DTE' : '') + '</span>' +
             '<span class="badge" style="background:' + assess.color + '15;border:1px solid ' + assess.color + '25;color:' + assess.color + ';font-size:9px">' + assess.label + '</span>' +
             (sector ? '<span style="font-size:9px;color:var(--text3)">' + sector + '</span>' : '') +
           '</div>' +
           '<div style="font-size:10px;color:var(--text3)">' + t.strategy + '</div>' +
-          '<div style="font-size:10px;color:var(--text2);margin-top:2px">Exp ' + t.expDate + ' &bull; <span style="color:' + dteC + ';font-weight:600">' + (dte !== undefined ? dte + 'D left' : '?') + '</span></div>' +
+          '<div style="font-size:10px;color:var(--text2);margin-top:2px">Exp ' + t.expDate + '</div>' +
         '</div>' +
         '<div style="text-align:right">' +
           '<div style="font-family:var(--mono);font-size:16px;font-weight:700;color:' +
@@ -126,6 +134,8 @@ function renderTrades() {
           return '<span class="lb ' + (l.a === 'SELL' ? 'lb-sell' : 'lb-buy') + '">' + l.a + ' ' + l.n + '&times; $' + l.s + ' ' + l.t + '</span>';
         }).join('') +
       '</div>' +
+      '<button class="btn btn-ghost btn-sm" onclick="toggleTradeDetails(' + jsArg(t.id) + ')" style="margin-bottom:8px">' + (expanded ? 'Hide details' : 'Show details') + '</button>' +
+      (expanded ? (
       g3html([
         mc2('Price',      priceLabel || 'N/A',              lp ? 'var(--green)' : 'var(--text)'),
         mc2('Credit/shr', '$' + (t.creditReceived || '?'),  'var(--green)'),
@@ -145,11 +155,11 @@ function renderTrades() {
         ? '<div style="padding:7px 10px;background:var(--red-dim);border-radius:7px;font-size:11px;color:var(--red);margin-bottom:8px;border:1px solid rgba(239,68,68,.2)">&#9889; Exit if ' + t.ticker + ' breaks $' + t.exitSignal + '</div>'
         : '') +
       '<div style="display:flex;gap:5px">' +
-        '<input type="number" placeholder="P&L %" value="' + (t.currentPnlPct || '') + '" onblur="updPnl(' + t.id + ',this.value)" style="flex:1;font-family:var(--mono);font-size:13px;color:' + (pnl >= 40 ? 'var(--green)' : pnl < -15 ? 'var(--red)' : 'var(--text)') + '">' +
-        '<button onclick="closeT(' + t.id + ',\'PROFIT\')" class="btn btn-success btn-sm">&#10003; Win</button>' +
-        '<button onclick="closeT(' + t.id + ',\'STOP\')"   class="btn btn-danger btn-sm">&#10007; Loss</button>' +
-        '<button onclick="delT('  + t.id + ')"             class="btn btn-ghost btn-sm" style="color:var(--red);border-color:rgba(239,68,68,.3)">&#128465;</button>' +
-      '</div>' +
+        '<input type="number" placeholder="P&L %" value="' + (t.currentPnlPct || '') + '" onblur="updPnl(' + jsArg(t.id) + ',this.value)" style="flex:1;font-family:var(--mono);font-size:13px;color:' + (pnl >= 40 ? 'var(--green)' : pnl < -15 ? 'var(--red)' : 'var(--text)') + '">' +
+        '<button onclick="closeT(' + jsArg(t.id) + ',\'PROFIT\')" class="btn btn-success btn-sm">&#10003; Win</button>' +
+        '<button onclick="closeT(' + jsArg(t.id) + ',\'STOP\')"   class="btn btn-danger btn-sm">&#10007; Loss</button>' +
+        '<button onclick="delT('  + jsArg(t.id) + ')"             class="btn btn-ghost btn-sm" style="color:var(--red);border-color:rgba(239,68,68,.3)">&#128465;</button>' +
+      '</div>') : '') +
     '</div>';
   });
 
@@ -214,8 +224,15 @@ function renderTrades() {
   el.innerHTML = html;
 
   // Re-init leg form after render
-  formLegData = DEF[formStrat] ? DEF[formStrat].map(function(l) { return Object.assign({}, l); }) : [{ a:'BUY', t:'PUT', n:1, s:'' }];
+  if (!formLegData || !formLegData.length) {
+    formLegData = DEF[formStrat] ? DEF[formStrat].map(function(l) { return Object.assign({}, l); }) : [{ a:'BUY', t:'PUT', n:1, s:'' }];
+  }
   buildLegs();
+}
+
+function toggleTradeDetails(id) {
+  expandedTradeCards[id] = !expandedTradeCards[id];
+  renderTrades();
 }
 
 // ---------------------------------------------------------------------------
@@ -234,7 +251,7 @@ function closedRow(t) {
     '<div style="display:flex;gap:7px;align-items:center">' +
       '<span style="font-family:var(--mono);font-size:13px;font-weight:700;color:' + crCol + '">' + (pnl > 0 ? '+' : '') + pnl + '%</span>' +
       '<span class="chip" style="background:' + crCol + '15;color:' + crCol + ';font-size:9px">' + (t.closeReason || 'CLOSED') + '</span>' +
-      '<button onclick="delT(' + t.id + ')" style="background:transparent;border:none;color:var(--text3);cursor:pointer;font-size:14px">&#10005;</button>' +
+      '<button onclick="delT(' + jsArg(t.id) + ')" style="background:transparent;border:none;color:var(--text3);cursor:pointer;font-size:14px">&#10005;</button>' +
     '</div>' +
   '</div>';
 }
@@ -296,6 +313,27 @@ function tradeAutoCol() {
   if (el) el.value = col > 0 ? col.toFixed(0) : '';
 }
 
+function calcTradeBreakeven(strategy, legs, credit) {
+  var sellLeg = legs.find(function(l) { return l.a === 'SELL'; });
+  var buyLeg = legs.find(function(l) { return l.a === 'BUY'; });
+  var cr = safeNum(credit);
+  if (strategy === 'LONG PUT' && buyLeg) return safeNum(buyLeg.s) - cr;
+  if (strategy === 'LONG CALL' && buyLeg) return safeNum(buyLeg.s) + cr;
+  if (strategy === 'CALL CREDIT SPREAD' && sellLeg) return safeNum(sellLeg.s) + cr;
+  if (strategy === 'COVERED CALL') return null;
+  if (sellLeg) return safeNum(sellLeg.s) - cr;
+  return null;
+}
+
+function calcTradeCushion(t, price, breakeven) {
+  if (!price || !breakeven) return null;
+  if (t.strategy === 'LONG PUT' || t.strategy === 'PUT DEBIT SPREAD') return parseFloat(((breakeven - price) / price * 100).toFixed(1));
+  if (t.strategy === 'LONG CALL' || t.strategy === 'CALL DEBIT SPREAD' || t.strategy === 'CALL CREDIT SPREAD' || t.strategy === 'COVERED CALL') {
+    return parseFloat(((breakeven - price) / price * 100).toFixed(1));
+  }
+  return parseFloat(((price - breakeven) / price * 100).toFixed(1));
+}
+
 function addLeg() {
   formLegData.push({ a:'BUY', t:'PUT', n:1, s:'' });
   buildLegs();
@@ -335,10 +373,9 @@ async function submitTrade() {
   var exitVal    = $('tf-exit') ? $('tf-exit').value : '';
   var notesVal   = $('tf-notes')? $('tf-notes').value: '';
   var dteInput   = $('tf-dte')  ? $('tf-dte').value  : '';
-  var shortLeg   = formLegData.find(function(l) { return l.a === 'SELL'; });
-  var strike     = safeNum(shortLeg && shortLeg.s);
-  var be         = (strike > 0 && credit > 0) ? parseFloat((strike - credit).toFixed(2)) : null;
-  var cushionVal = (stock > 0 && be) ? parseFloat(((stock - be) / stock * 100).toFixed(1)) : null;
+  var beRaw      = calcTradeBreakeven(formStrat, formLegData, credit);
+  var be         = beRaw != null ? parseFloat(beRaw.toFixed(2)) : null;
+  var cushionVal = (stock > 0 && be) ? calcTradeCushion({ strategy: formStrat }, stock, be) : null;
   var dte        = calcDTE(expRaw);
   var sector     = TICKER_SECTOR[ticker] || null;
 
@@ -456,6 +493,8 @@ function logFromAnalysis() {
   formLegData = azResult.legs || DEF[formStrat].map(function(l) { return Object.assign({}, l); });
   showPage('trades');
   setTimeout(function() {
+    formStrat   = azResult.strategy || 'PUT CREDIT SPREAD';
+    formLegData = (azResult.legs || DEF[formStrat] || []).map(function(l) { return Object.assign({}, l); });
     var f = $('tfm');
     if (f && f.style.display === 'none') f.style.display = 'block';
     setTimeout(function() {
@@ -466,10 +505,7 @@ function logFromAnalysis() {
       if ($('tf-cr'))    $('tf-cr').value    = azResult.credit   != null ? azResult.credit.toString()   : '';
       if ($('tf-col'))   $('tf-col').value   = azResult.collateral != null ? azResult.collateral.toFixed(0) : '';
       if ($('tf-exit'))  $('tf-exit').value  = azResult.exitSignal != null ? azResult.exitSignal.toString() : '';
-      if ($('tf-notes')) $('tf-notes').value =
-        'Delta:' + (azResult.absDelta != null ? azResult.absDelta.toFixed(3) : '?') +
-        '(' + azResult.deltaSource + ') HV30:' + ((azResult.hv30 || 0) * 100).toFixed(1) + '%' +
-        (azResult.earningsRisk ? ' \u26a0 Earnings:' + azResult.earningsDate : '');
+      if ($('tf-notes')) $('tf-notes').value = azResult.notes || '';
       buildLegs();
     }, 80);
   }, 150);

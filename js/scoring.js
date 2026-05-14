@@ -109,27 +109,27 @@ function buildGuidance(sig, vix, spy, creditChg, fg, rspDiff) {
 
   if (sig === 'GREEN') {
     return (vix && vix.ok && vix.level
-        ? 'VIX at ' + vix.level + ' is ' + (vix.level < 18 ? 'low -- ideal for premium collection.' : 'moderate and stable.')
+        ? 'VIX at ' + vix.level + ' is ' + (vix.level < 18 ? 'low.' : 'moderate and stable.')
         : 'Market structure constructive.')
       + ' ' + (fg ? 'Fear/Greed at ' + fg.score + ' (' + fg.rating + ').' : '')
       + ' ' + (spy && spy.above50 && spy.above200 ? 'SPY holding above both key moving averages.'
                : spy && spy.above50 ? 'SPY above 50MA.' : 'SPY below 50MA -- watch.')
       + ' ' + (rspDiff > 0.5 ? 'Equal-weight outperforming -- broad participation.'
                : rspDiff < -1 ? 'Narrow market -- only large caps leading. Be selective.' : '')
-      + ' Your ' + dteRange + ' DTE credit structures are well-positioned. Stick to ' + s + ' cushion minimum.';
+      + ' Use this as condition context, not a trade direction.';
   }
   if (sig === 'YELLOW') {
     return 'Mixed environment.'
       + (vix && vix.ok && vix.chg > 10 ? ' VIX spiked ' + vix.chg + '% in 5 days -- elevated fear.' : '')
       + (fg && fg.score < 35 ? ' Market showing fear -- be selective.' : '')
       + (rspDiff < -1 ? ' Breadth narrowing.' : '')
-      + ' Size down, close positions below ' + s + ' cushion, check calendar before any new opens.';
+      + ' Check calendar, volatility, and your own directional bias before acting.';
   }
   return 'Elevated risk.'
     + (vix && vix.ok && vix.level > 30 ? ' VIX at ' + vix.level + ' is high fear.' : '')
     + (fg && fg.score < 25 ? ' Extreme fear in market.' : '')
     + (creditChg > 10 ? ' Credit spreads widening.' : '')
-    + ' Avoid new positions until conditions normalize.';
+    + ' Conditions are stressed; some styles may still seek opportunity here.';
 }
 
 // ---------------------------------------------------------------------------
