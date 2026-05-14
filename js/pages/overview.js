@@ -27,7 +27,7 @@ function renderOverview() {
     var col       = sigC(sig);
     var fgScore   = (fg && fg.score) || 50;
     var fgCol     = fgScore > 60 ? '#22c55e' : fgScore < 40 ? '#ef4444' : '#f59e0b';
-    var sigLabel  = sig === 'GREEN' ? 'Trade Normally' : sig === 'YELLOW' ? 'Use Caution' : 'Reduce Exposure';
+    var sigLabel  = sig === 'GREEN' ? 'Strong Market Conditions' : sig === 'YELLOW' ? 'Mixed Market Conditions' : 'Poor Market Conditions';
 
     var cacheTs = JSON.parse(localStorage.getItem(CK.mkt) || '{}').ts || Date.now();
     var age     = Math.round((Date.now() - cacheTs) / 60000);
@@ -58,13 +58,7 @@ function renderOverview() {
           mc2('Structure',  Math.round(ss),   barC(ss)),
           mc2('Sentiment',  Math.round(sent), barC(sent))
         ]) +
-        '<div style="padding:9px 12px;background:' + col + '0c;border-radius:8px;font-size:11px;color:' + col + ';line-height:1.5;border:1px solid ' + col + '18">' +
-          (sig === 'GREEN'
-            ? 'Conditions favorable -- trade your ' + prefs.dteLow + '-' + prefs.dteHigh + ' DTE structures at normal size.'
-            : sig === 'YELLOW'
-            ? 'Mixed conditions -- size down, check calendar before opening new positions.'
-            : 'Elevated risk -- avoid new positions, consider closing thin-cushion spreads.') +
-        '</div>' +
+        '<div style="padding:9px 12px;background:' + col + '0c;border-radius:8px;font-size:11px;color:' + col + ';line-height:1.5;border:1px solid ' + col + '18">Signal describes broad market conditions only. Direction, sizing, and strategy choice depend on your trade plan.</div>' +
       '</div>' +
 
       // ── Market tiles row 1 ────────────────────────────────────────────────
