@@ -42,7 +42,7 @@ function renderAnalyze() {
       '</div>' +
     '</div>' +
     '<div class="fg2">' +
-      '<div class="fld"><label>Collateral $ (auto)</label>' +
+      '<div class="fld"><label>Collateral $ (estimate)</label>' +
         '<input id="az-col" placeholder="Auto" type="number" step="1" style="font-family:var(--mono)">' +
       '</div>' +
       '<div class="fld"><label>Notes</label>' +
@@ -158,7 +158,7 @@ async function runAnalysis() {
       price:         d.price,
       lastDate:      d.lastDate,
       credit:        credit,
-      collateral:    d.collateral || calcCollateral(azStrat, azLegData, credit),
+      collateral:    d.collateral != null ? d.collateral : calcCollateral(azStrat, azLegData, credit),
       breakeven:     d.breakeven     || null,
       cushionPct:    d.cushionPct    || null,
       absDelta:      d.absDelta      || null,

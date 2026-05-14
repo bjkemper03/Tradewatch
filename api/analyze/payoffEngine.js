@@ -84,6 +84,15 @@ function highSideSlope(model) {
   return slope;
 }
 
+function lowSideSlope(model) {
+  let slope = model.underlyingShares;
+  for (const leg of model.legs) {
+    if (leg.type !== 'PUT') continue;
+    slope += (leg.action === 'BUY' ? -1 : 1) * leg.qty * model.multiplier;
+  }
+  return slope;
+}
+
 function findBreakevens(model, breakpoints) {
   const roots = [];
   const sorted = uniqSorted([0, ...breakpoints]);
@@ -135,11 +144,12 @@ export function summarizePayoff(model, {
   const strikes = model.legs.map(leg => leg.strike);
   const breakpoints = uniqSorted([0, ...strikes]);
   const candidates = uniqSorted([0, ...strikes]);
-  const slope = highSideSlope(model);
+  const highSlope = highSideSlope(model);
+  const lowSlope = lowSideSlope(model);
   const candidatePnls = candidates.map(px => ({ px, pnl: payoffAt(model, px) }));
 
-  let maxProfitUnlimited = slope > 0;
-  let maxLossUnlimited = slope < 0;
+  let maxProfitUnlimited = highSlope > 0;
+  let maxLossUnlimited = highSlope < 0;
   let maxPnl = maxProfitUnlimited ? null : Math.max(...candidatePnls.map(p => p.pnl));
   let minPnl = maxLossUnlimited ? null : Math.min(...candidatePnls.map(p => p.pnl));
   const breakevens = findBreakevens(model, breakpoints);
@@ -178,8 +188,11 @@ export function summarizePayoff(model, {
     maxLoss: minPnl !== null ? money(Math.max(0, -minPnl)) : null,
     maxProfitUnlimited,
     maxLossUnlimited,
+    highSideSlope: money(highSlope),
+    lowSideSlope: money(lowSlope),
     minPnl: minPnl !== null ? money(minPnl) : null,
     maxPnl: maxPnl !== null ? money(maxPnl) : null,
+    collateral: minPnl !== null ? money(Math.max(0, -minPnl)) : null,
     breakevens,
     low: price(low),
     high: price(high),

@@ -56,7 +56,10 @@ function getBestVol(greeks, hv30) {
 function checkEarningsRisk(earnings, expDateObj) {
   if (!earnings || !expDateObj) return { risk: false, date: null };
   const ed = new Date(earnings.date + 'T12:00:00');
-  return { risk: ed <= expDateObj, date: earnings.date };
+  if (isNaN(ed.getTime())) return { risk: false, date: earnings.date || null };
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  return { risk: ed >= today && ed <= expDateObj, date: earnings.date };
 }
 
 // Signal from prefs thresholds
@@ -101,6 +104,32 @@ function firstBreakeven(payoff, fallback = null) {
   return payoff?.breakevens?.length ? payoff.breakevens[0] : fallback;
 }
 
+function collateralFromPayoff(payoff, fallback = 0) {
+  if (!payoff) return fallback;
+  if (payoff.maxLossUnlimited) return null;
+  return payoff.collateral ?? payoff.maxLoss ?? fallback;
+}
+
+function sameOptionType(legs) {
+  const types = [...new Set((legs || []).map(l => String(l.t || '').toUpperCase()).filter(Boolean))];
+  return types.length <= 1 ? types[0] || null : null;
+}
+
+function groupedByStrike(legs) {
+  const map = new Map();
+  for (const leg of legs) {
+    const strike = safeNum(leg.s);
+    if (!strike) continue;
+    const item = map.get(strike) || { strike, buyQty: 0, sellQty: 0, netQty: 0 };
+    const qty = Math.max(1, safeNum(leg.n || 1, 1));
+    if (leg.a === 'BUY') item.buyQty += qty;
+    if (leg.a === 'SELL') item.sellQty += qty;
+    item.netQty = item.buyQty - item.sellQty;
+    map.set(strike, item);
+  }
+  return [...map.values()].sort((a, b) => a.strike - b.strike);
+}
+
 // ---------------------------------------------------------------------------
 // 1. PUT CREDIT SPREAD / CALL CREDIT SPREAD
 // ---------------------------------------------------------------------------
@@ -118,6 +147,9 @@ export function analyzeCreditSpread(data, legs, expDateObj, dte, credit, prefs) 
   const optType     = (sellLeg.t || 'PUT').toLowerCase();
   const isPut       = optType === 'put';
 
+  if (String(buyLeg.t || '').toUpperCase() !== String(sellLeg.t || '').toUpperCase()) {
+    return { error: 'Credit spread legs must use the same option type' };
+  }
   if (!shortStrike || !longStrike) return { error: 'Enter strike prices for both legs' };
 
   const spreadWidth = Math.abs(shortStrike - longStrike);
@@ -199,7 +231,7 @@ export function analyzeCreditSpread(data, legs, expDateObj, dte, credit, prefs) 
   if (crWidthPct < crwMin)                            issues.push({ level:'warning',  msg:`Credit is only ${crWidthPct}% of spread width -- low return on risk` });
   if (dte < dteMin)                                   issues.push({ level:'warning',  msg:`${dte} DTE below your ${dteMin} minimum` });
   if (dte > dteMax)                                   issues.push({ level:'warning',  msg:`${dte} DTE above your ${dteMax} maximum` });
-  if (isPut && nearestSupport && shortStrike < nearestSupport) issues.push({ level:'warning', msg:`Short strike $${shortStrike} below support $${nearestSupport}` });
+  if (isPut && nearestSupport && shortStrike > nearestSupport) issues.push({ level:'warning', msg:`Short put $${shortStrike} sits above nearest support $${nearestSupport} -- support is not protecting the strike` });
   if (!strikeOutsideEM && em)                         issues.push({ level:'warning',  msg:`Short strike inside 1SD expected move ($${em})` });
 
   return {
@@ -258,6 +290,9 @@ export function analyzeIronCondor(data, legs, expDateObj, dte, credit, prefs) {
 
   if (!sellPut || !buyPut || !sellCall || !buyCall) {
     return { error: 'Iron condor requires 4 legs: sell put, buy put, sell call, buy call' };
+  }
+  if (puts.length !== 2 || calls.length !== 2) {
+    return { error: 'Iron condor expects exactly two put legs and two call legs' };
   }
 
   const shortPut  = safeNum(sellPut.s);
@@ -504,10 +539,9 @@ export function analyzeCoveredCall(data, legs, expDateObj, dte, credit, prefs) {
   // Wheel scenarios
   const wheelData = calcWheelScenarios(price, strike, cr, dte, 'call');
 
-  // Probability of being called away
-  const probCalledAway = calcPOW(price, strike, vol, dte, 'put'); // P(price < strike) for CC = P(not called)
-  const probNotCalled  = probCalledAway;
-  const probCalled     = probCalledAway != null ? parseFloat((1 - probCalledAway).toFixed(4)) : null;
+  // Probability of being called away: below strike means not called, above strike means called.
+  const probNotCalled  = calcPOW(price, strike, vol, dte, 'put');
+  const probCalled     = probNotCalled != null ? parseFloat((1 - probNotCalled).toFixed(4)) : null;
 
   const earningsCheck = checkEarningsRisk(earnings, expDateObj);
 
@@ -528,6 +562,7 @@ export function analyzeCoveredCall(data, legs, expDateObj, dte, credit, prefs) {
     upsideCap, upsideCapPct,
     downsideProtection,
     maxProfit,
+    collateral: 0,
     absDelta, deltaSource,
     greeks: greeks || null,
     iv: greeks?.iv || null,
@@ -564,7 +599,7 @@ export function analyzeButterflyBWB(data, legs, expDateObj, dte, credit, prefs, 
   if (allLegs.length < 3) return { error: 'Butterfly/BWB requires at least 3 legs' };
 
   const optType = allLegs[0].t.toLowerCase();
-  const sorted  = [...allLegs].sort((a, b) => a.strike - b.strike);
+  if (!sameOptionType(allLegs)) return { error: 'Butterfly/BWB/ratio legs must use the same option type' };
 
   // Identify structure
   const sells = allLegs.filter(l => l.a === 'SELL');
@@ -572,22 +607,24 @@ export function analyzeButterflyBWB(data, legs, expDateObj, dte, credit, prefs, 
 
   if (sells.length === 0 || buys.length === 0) return { error: 'Need both buy and sell legs' };
 
-  // For BWB/ratio: typically 1 buy + 2 sells (or 2 sells + 1 buy upper)
-  // For butterfly: 2 buys (outer) + 2 sells (inner, same strike)
-  const sellStrikes = sells.map(l => l.strike).sort((a, b) => a - b);
-  const buyStrikes  = buys.map(l => l.strike).sort((a, b) => a - b);
+  const groups = groupedByStrike(allLegs);
+  const shortGroups = groups.filter(g => g.netQty < 0);
+  const longGroups = groups.filter(g => g.netQty > 0);
+  if (!shortGroups.length || !longGroups.length) return { error: 'Could not identify net long and short strikes' };
 
-  // Center strike = the sold strike(s)
-  const centerStrike = sells[0].strike;
-  const lowerStrike  = buyStrikes[0];
-  const upperStrike  = buyStrikes.length > 1 ? buyStrikes[buyStrikes.length - 1] : null;
+  const centerGroup = shortGroups.reduce((best, g) => Math.abs(g.netQty) > Math.abs(best.netQty) ? g : best, shortGroups[0]);
+  const centerStrike = centerGroup.strike;
+  const lowerStrike  = groups[0].strike;
+  const upperStrike  = groups.length > 1 ? groups[groups.length - 1].strike : null;
+  const hasLongBelow = longGroups.some(g => g.strike < centerStrike);
+  const hasLongAbove = longGroups.some(g => g.strike > centerStrike);
 
   // Wings
-  const lowerWing = centerStrike - lowerStrike;
-  const upperWing = upperStrike ? upperStrike - centerStrike : null;
-  const isSymmetric = upperWing && Math.abs(lowerWing - upperWing) < 0.26;
-  const isBWB       = upperWing && !isSymmetric;
-  const isRatio     = !upperStrike; // sell 2, buy 1 -- uncapped upside risk
+  const lowerWing = hasLongBelow ? centerStrike - lowerStrike : null;
+  const upperWing = hasLongAbove && upperStrike ? upperStrike - centerStrike : null;
+  const isSymmetric = lowerWing && upperWing && Math.abs(lowerWing - upperWing) < 0.26;
+  const isRatio     = !hasLongBelow || !hasLongAbove;
+  const isBWB       = !isRatio && !isSymmetric;
 
   // Get vol
   const contract = findChainContract(chain, centerStrike, optType);
@@ -629,11 +666,12 @@ export function analyzeButterflyBWB(data, legs, expDateObj, dte, credit, prefs, 
     : null;
 
   const earningsCheck = checkEarningsRisk(earnings, expDateObj);
+  const nowPayoff = payoff.checkpoints.find(p => p.label === 'Now')?.pnl;
 
   const issues = [];
   if (earningsCheck.risk)                issues.push({ level:'critical', msg:`Earnings ${earningsCheck.date} within expiration` });
-  if (payoff.maxLossUnlimited)          issues.push({ level:'warning',  msg:'Structure has uncapped expiration loss on one side' });
-  if ((lowerBE && price < lowerBE) || (upperBE && price > upperBE)) issues.push({ level:'warning', msg:'Price already outside profit zone' });
+  if (payoff.maxLossUnlimited)          issues.push({ level:'critical', msg:'Structure has uncapped expiration loss on one side' });
+  if (nowPayoff != null && nowPayoff < 0) issues.push({ level:'warning', msg:'Price is currently outside the expiration profit zone' });
   if (crRatio && crRatio < 12)          issues.push({ level:'warning',  msg:`Low credit/risk ratio: ${crRatio}%` });
 
   return {
@@ -646,6 +684,7 @@ export function analyzeButterflyBWB(data, legs, expDateObj, dte, credit, prefs, 
     lowerWing, upperWing, wingRatio,
     lowerBE, upperBE,
     maxProfit, maxLoss,
+    collateral: collateralFromPayoff(payoff),
     maxProfitUnlimited: payoff.maxProfitUnlimited,
     maxLossUnlimited: payoff.maxLossUnlimited,
     crRatio,
@@ -655,7 +694,7 @@ export function analyzeButterflyBWB(data, legs, expDateObj, dte, credit, prefs, 
     probMaxProfit:  probs?.probMaxProfit || null,
     probAnyProfit:  probs?.probAnyProfit || null,
     profitTiers:    probs?.tiers         || [],
-    expectedValue,
+    expectedValue: null,
 
     greeks: greeks || null,
     iv: greeks?.iv || null,
@@ -687,6 +726,9 @@ export function analyzeDebitSpread(data, legs, expDateObj, dte, debit, prefs) {
   const optType     = (buyLeg.t || 'PUT').toLowerCase();
   const isPut       = optType === 'put';
 
+  if (String(buyLeg.t || '').toUpperCase() !== String(sellLeg.t || '').toUpperCase()) {
+    return { error: 'Debit spread legs must use the same option type' };
+  }
   if (!longStrike || !shortStrike) return { error: 'Enter strike prices for both legs' };
 
   const spreadWidth = Math.abs(longStrike - shortStrike);
@@ -751,6 +793,7 @@ export function analyzeDebitSpread(data, legs, expDateObj, dte, debit, prefs) {
     price, longStrike, shortStrike, spreadWidth,
     breakeven, moveToBreakeven, movePct,
     maxProfit, maxLoss, riskReward,
+    collateral: collateralFromPayoff(payoff),
     debit: db,
 
     absDelta,
@@ -819,6 +862,7 @@ export function analyzeLongOption(data, legs, expDateObj, dte, premium, prefs) {
     price, strike, prem,
     breakeven:    firstBreakeven(payoff, targetData.breakeven),
     maxLoss,
+    collateral: collateralFromPayoff(payoff),
     maxProfit: payoff.maxProfit,
     maxProfitUnlimited: payoff.maxProfitUnlimited,
     theoreticalMax: targetData.theoreticalMax, // null for calls, real for puts

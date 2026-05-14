@@ -54,11 +54,19 @@ const STRATEGY_GROUPS = {
 // ---------------------------------------------------------------------------
 function normalizeDate(expDate) {
   if (!expDate) return null;
-  const s = expDate.trim().replace(/-/g, '/');
-  const p = s.split('/');
-  if (p.length !== 3) return null;
-  let [m, d, y] = p;
-  if (y.length === 2) y = '20' + y;
+  const raw = expDate.trim();
+  let y, m, d;
+
+  const iso = raw.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
+  if (iso) {
+    y = iso[1]; m = iso[2]; d = iso[3];
+  } else {
+    const p = raw.replace(/-/g, '/').split('/');
+    if (p.length !== 3) return null;
+    [m, d, y] = p;
+    if (y.length === 2) y = '20' + y;
+  }
+
   const formatted = `${y}-${m.padStart(2,'0')}-${d.padStart(2,'0')}`;
   const dt = new Date(formatted + 'T16:00:00');
   return isNaN(dt.getTime()) ? null : { formatted, obj: dt };
@@ -119,6 +127,12 @@ export default async function handler(req, res) {
     return res.status(400).json({
       ok: false,
       error: 'Invalid expiration date. Use format: 5/23/26 or 2026-05-23',
+    });
+  }
+  if (expDateObj && dte < 0) {
+    return res.status(400).json({
+      ok: false,
+      error: 'Expiration date is already past. Choose a current or future expiration.',
     });
   }
 
