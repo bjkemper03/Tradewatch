@@ -7,6 +7,18 @@
 const POLYGON_KEY = process.env.POLYGON_KEY;
 const TRADIER_KEY = process.env.TRADIER_KEY;
 
+async function readJson(res) {
+  const text = await res.text();
+  if (!text) return null;
+  const trimmed = text.trim();
+  if (!trimmed.startsWith('{') && !trimmed.startsWith('[')) return null;
+  try {
+    return JSON.parse(trimmed);
+  } catch {
+    return null;
+  }
+}
+
 async function earningsTradier(ticker) {
   try {
     const res = await fetch(
@@ -19,7 +31,8 @@ async function earningsTradier(ticker) {
         signal: AbortSignal.timeout(8000),
       }
     );
-    const d      = await res.json();
+    const d      = await readJson(res);
+    if (!d) return null;
     const events = d?.fundamentals?.[0]?.corporate_calendars;
     if (!events) return null;
     const earnings = events
