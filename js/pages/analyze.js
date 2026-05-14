@@ -223,6 +223,11 @@ function fmtMoney(v) {
   return (n < 0 ? '-$' : '$') + Math.abs(n).toFixed(0);
 }
 
+function fmtRiskMoney(v, unlimited) {
+  if (unlimited) return 'Unlimited';
+  return fmtMoney(v);
+}
+
 function renderModelNotes(d) {
   var notes = d.modelNotes || [];
   if (!notes.length) return '';
@@ -241,6 +246,20 @@ function renderModelNotes(d) {
 }
 
 function estimatePayoff(d, px) {
+  if (d.payoff && d.payoff.points && d.payoff.points.length) {
+    var pts = d.payoff.points;
+    if (px <= pts[0].px) return pts[0].pnl;
+    if (px >= pts[pts.length - 1].px) return pts[pts.length - 1].pnl;
+    for (var j = 1; j < pts.length; j++) {
+      if (px <= pts[j].px) {
+        var a = pts[j - 1];
+        var b = pts[j];
+        var span = b.px - a.px;
+        if (!span) return b.pnl;
+        return a.pnl + (b.pnl - a.pnl) * ((px - a.px) / span);
+      }
+    }
+  }
   var legs = azLegData || [];
   if (!legs.length) return null;
   var premium = safeNum($('az-cr') ? $('az-cr').value : d.credit || d.prem || d.debit || 0);
@@ -308,6 +327,17 @@ function payoffShapeLeave() {
 }
 
 function payoffExactRows(d, payoffAt) {
+  if (d.payoff && d.payoff.checkpoints && d.payoff.checkpoints.length) {
+    return d.payoff.checkpoints.map(function(m) {
+      return {
+        label: m.label,
+        px: m.px,
+        pnl: m.pnl,
+        note: m.note || '',
+        kind: m.kind || ''
+      };
+    });
+  }
   var sg = d.strategyGroup || '';
   var rows = [];
   function row(label, px, note, kind) {
@@ -350,22 +380,27 @@ function payoffExactRows(d, payoffAt) {
 
 function renderPayoffShape(d) {
   if (!d.price) return '';
-  var strikes = (azLegData || []).map(function(l) { return safeNum(l.s); }).filter(function(s) { return s > 0; });
-  var beVals = [d.breakeven, d.lowerBE, d.upperBE, d.putBreakeven, d.callBreakeven]
-    .map(function(v) { return safeNum(v); })
-    .filter(function(v) { return v > 0; });
-  var anchorVals = strikes.concat(beVals).concat([d.price]);
-  var minAnchor = Math.min.apply(null, anchorVals);
-  var maxAnchor = Math.max.apply(null, anchorVals);
-  var span = Math.max(d.price * 0.18, maxAnchor - minAnchor, 1);
-  var low = Math.max(0.01, Math.min(d.price * 0.75, minAnchor - span * 0.35));
-  var high = Math.max(d.price * 1.25, maxAnchor + span * 0.35);
-  var points = [];
-  for (var i = 0; i <= 96; i++) {
-    var px = low + (high - low) * i / 96;
-    var pnl = estimatePayoff(d, px);
-    if (pnl == null || !Number.isFinite(pnl)) return '';
-    points.push({ px: px, pnl: pnl });
+  var points = d.payoff && d.payoff.points && d.payoff.points.length ? d.payoff.points : null;
+  var low = d.payoff && d.payoff.low ? safeNum(d.payoff.low) : null;
+  var high = d.payoff && d.payoff.high ? safeNum(d.payoff.high) : null;
+  if (!points) {
+    var strikes = (azLegData || []).map(function(l) { return safeNum(l.s); }).filter(function(s) { return s > 0; });
+    var beVals = [d.breakeven, d.lowerBE, d.upperBE, d.putBreakeven, d.callBreakeven]
+      .map(function(v) { return safeNum(v); })
+      .filter(function(v) { return v > 0; });
+    var anchorVals = strikes.concat(beVals).concat([d.price]);
+    var minAnchor = Math.min.apply(null, anchorVals);
+    var maxAnchor = Math.max.apply(null, anchorVals);
+    var span = Math.max(d.price * 0.18, maxAnchor - minAnchor, 1);
+    low = Math.max(0.01, Math.min(d.price * 0.75, minAnchor - span * 0.35));
+    high = Math.max(d.price * 1.25, maxAnchor + span * 0.35);
+    points = [];
+    for (var i = 0; i <= 96; i++) {
+      var px = low + (high - low) * i / 96;
+      var pnl = estimatePayoff(d, px);
+      if (pnl == null || !Number.isFinite(pnl)) return '';
+      points.push({ px: px, pnl: pnl });
+    }
   }
   var minY = Math.min.apply(null, points.map(function(p) { return p.pnl; }).concat([0]));
   var maxY = Math.max.apply(null, points.map(function(p) { return p.pnl; }).concat([0]));
@@ -535,34 +570,35 @@ function renderAnalysisResult(d) {
     if (d.cushionPct != null)   metrics.push(mc2('CUSHION',      d.cushionPct + '%',              cushC(d.cushionPct)));
     if (d.breakeven != null)    metrics.push(mc2('BREAKEVEN',    '$' + d.breakeven,               'var(--text)'));
     if (d.crWidthPct != null)   metrics.push(mc2('CR/WIDTH',     d.crWidthPct + '%',              d.crWidthPct >= prefs.creditWidthMin ? '#22c55e' : '#f59e0b'));
-    if (d.maxProfit != null)    metrics.push(mc2('MAX PROFIT',   '$' + d.maxProfit.toFixed(0),    '#22c55e'));
-    if (d.maxLoss != null)      metrics.push(mc2('MAX LOSS',     '$' + d.maxLoss.toFixed(0),      '#ef4444'));
+    if (d.maxProfit != null || d.maxProfitUnlimited) metrics.push(mc2('MAX PROFIT', fmtRiskMoney(d.maxProfit, d.maxProfitUnlimited), '#22c55e'));
+    if (d.maxLoss != null || d.maxLossUnlimited)     metrics.push(mc2('MAX LOSS',   fmtRiskMoney(d.maxLoss, d.maxLossUnlimited),     '#ef4444'));
   }
   if (sg === 'iron_condor' || sg === 'iron_butterfly') {
     if (d.putCushionPct != null)  metrics.push(mc2('PUT CUSHION',     d.putCushionPct + '%',           cushC(d.putCushionPct)));
     if (d.callCushionPct != null) metrics.push(mc2('CALL CUSHION',    d.callCushionPct + '%',          cushC(d.callCushionPct)));
     if (d.putBreakeven != null)   metrics.push(mc2('PUT BE',          '$' + d.putBreakeven,            'var(--text)'));
     if (d.callBreakeven != null)  metrics.push(mc2('CALL BE',         '$' + d.callBreakeven,           'var(--text)'));
-    if (d.maxProfit != null)      metrics.push(mc2('MAX PROFIT',      '$' + d.maxProfit.toFixed(0),    '#22c55e'));
-    if (d.maxLoss != null)        metrics.push(mc2('MAX LOSS',        '$' + d.maxLoss.toFixed(0),      '#ef4444'));
+    if (d.maxProfit != null || d.maxProfitUnlimited) metrics.push(mc2('MAX PROFIT', fmtRiskMoney(d.maxProfit, d.maxProfitUnlimited), '#22c55e'));
+    if (d.maxLoss != null || d.maxLossUnlimited)     metrics.push(mc2('MAX LOSS',   fmtRiskMoney(d.maxLoss, d.maxLossUnlimited),     '#ef4444'));
   }
   if (sg === 'bwb' || sg === 'butterfly' || sg === 'ratio_spread') {
     if (d.lowerBE != null)      metrics.push(mc2('LOWER BE',    '$' + d.lowerBE,              'var(--text)'));
     if (d.upperBE != null)      metrics.push(mc2('UPPER BE',    '$' + d.upperBE,              'var(--text)'));
-    if (d.maxProfit != null)    metrics.push(mc2('MAX PROFIT',  '$' + d.maxProfit.toFixed(0), '#22c55e'));
-    if (d.maxLoss != null)      metrics.push(mc2('MAX LOSS',    '$' + d.maxLoss.toFixed(0),   '#ef4444'));
+    if (d.maxProfit != null || d.maxProfitUnlimited) metrics.push(mc2('MAX PROFIT', fmtRiskMoney(d.maxProfit, d.maxProfitUnlimited), '#22c55e'));
+    if (d.maxLoss != null || d.maxLossUnlimited)     metrics.push(mc2('MAX LOSS',   fmtRiskMoney(d.maxLoss, d.maxLossUnlimited),     '#ef4444'));
     if (d.crRatio != null)      metrics.push(mc2('CR/RISK',     d.crRatio + '%',              d.crRatio >= 20 ? '#22c55e' : d.crRatio >= 12 ? '#f59e0b' : '#ef4444'));
   }
   if (sg === 'put_debit_spread' || sg === 'call_debit_spread') {
     if (d.breakeven != null)    metrics.push(mc2('BREAKEVEN',   '$' + d.breakeven,            'var(--text)'));
     if (d.movePct != null)      metrics.push(mc2('MOVE NEEDED', d.movePct + '%',              d.movePct < 5 ? '#22c55e' : d.movePct < 10 ? '#f59e0b' : '#ef4444'));
-    if (d.maxProfit != null)    metrics.push(mc2('MAX PROFIT',  '$' + d.maxProfit.toFixed(0), '#22c55e'));
-    if (d.maxLoss != null)      metrics.push(mc2('MAX LOSS',    '$' + d.maxLoss.toFixed(0),   '#ef4444'));
+    if (d.maxProfit != null || d.maxProfitUnlimited) metrics.push(mc2('MAX PROFIT', fmtRiskMoney(d.maxProfit, d.maxProfitUnlimited), '#22c55e'));
+    if (d.maxLoss != null || d.maxLossUnlimited)     metrics.push(mc2('MAX LOSS',   fmtRiskMoney(d.maxLoss, d.maxLossUnlimited),     '#ef4444'));
     if (d.riskReward != null)   metrics.push(mc2('RISK/REWARD', d.riskReward + ':1',          d.riskReward < 1 ? '#22c55e' : d.riskReward < 2 ? '#f59e0b' : '#ef4444'));
   }
   if (sg === 'long_call' || sg === 'long_put') {
     if (d.breakeven != null)    metrics.push(mc2('BREAKEVEN',     '$' + d.breakeven,                         'var(--text)'));
-    if (d.maxLoss != null)      metrics.push(mc2('MAX LOSS',      '$' + d.maxLoss.toFixed(0),               '#ef4444'));
+    if (d.maxProfit != null || d.maxProfitUnlimited) metrics.push(mc2('MAX PROFIT', fmtRiskMoney(d.maxProfit, d.maxProfitUnlimited), '#22c55e'));
+    if (d.maxLoss != null || d.maxLossUnlimited)     metrics.push(mc2('MAX LOSS',   fmtRiskMoney(d.maxLoss, d.maxLossUnlimited),     '#ef4444'));
   }
 
   var earnCol = d.earningsRisk ? '#ef4444' : '#22c55e';
