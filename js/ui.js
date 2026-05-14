@@ -1,8 +1,19 @@
 // =============================================================================
-// js/ui.js -- Shared HTML helper functions
+// js/ui.js -- Shared DOM, color, toast, and HTML helper functions
 // Must load BEFORE any js/pages/*.js files.
 // All functions are global.
 // =============================================================================
+
+const $ = id => document.getElementById(id);
+const sigC = s => s==='GREEN'?'#22c55e':s==='YELLOW'?'#f59e0b':'#ef4444';
+const barC = s => s>=62?'#22c55e':s>=42?'#f59e0b':'#ef4444';
+
+function toast(m, d=2500) {
+  const t = $('toast');
+  t.textContent = m;
+  t.style.display = 'block';
+  setTimeout(() => t.style.display = 'none', d);
+}
 
 // ---------------------------------------------------------------------------
 // Metric card -- small labeled value box
