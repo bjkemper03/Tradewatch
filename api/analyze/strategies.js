@@ -130,6 +130,40 @@ function groupedByStrike(legs) {
   return [...map.values()].sort((a, b) => a.strike - b.strike);
 }
 
+function aggregateLegGreeks(chain, legs, fallbackVol, price, dte, optTypeFallback) {
+  const totals = { delta: 0, gamma: 0, theta: 0, vega: 0, rho: 0 };
+  let found = false;
+  let source = 'BS';
+
+  for (const leg of legs) {
+    const type = String(leg.t || optTypeFallback || 'PUT').toLowerCase();
+    const strike = safeNum(leg.s);
+    const qty = Math.max(1, safeNum(leg.n || 1, 1));
+    const side = leg.a === 'BUY' ? 1 : -1;
+    const g = extractGreeks(findChainContract(chain, strike, type));
+    if (g) {
+      ['delta', 'gamma', 'theta', 'vega', 'rho'].forEach(k => {
+        if (g[k] != null) {
+          totals[k] += side * qty * safeNum(g[k]);
+          found = true;
+          source = 'Tradier';
+        }
+      });
+    } else if (strike && price && dte && fallbackVol && !found) {
+      const bd = bsDelta(price, strike, dte / 365, fallbackVol, type);
+      if (bd !== null) {
+        totals.delta += side * qty * bd;
+        found = true;
+      }
+    }
+  }
+
+  if (!found) return null;
+  Object.keys(totals).forEach(k => { totals[k] = parseFloat(totals[k].toFixed(4)); });
+  totals.source = source;
+  return totals;
+}
+
 // ---------------------------------------------------------------------------
 // 1. PUT CREDIT SPREAD / CALL CREDIT SPREAD
 // ---------------------------------------------------------------------------
@@ -630,6 +664,10 @@ export function analyzeButterflyBWB(data, legs, expDateObj, dte, credit, prefs, 
   const contract = findChainContract(chain, centerStrike, optType);
   const greeks   = extractGreeks(contract);
   const vol      = getBestVol(greeks, hv30);
+  const netGreeks = aggregateLegGreeks(chain, allLegs, vol, price, dte, optType);
+  const absDelta = netGreeks?.delta != null
+    ? Math.abs(netGreeks.delta)
+    : Math.abs(bsDelta(price, centerStrike, dte / 365, vol, optType) || 0);
 
   // Expiration payoff from exact leg geometry.
   const payoff = payoffSummary(legs, isCredit ? cr : -cr, price, [
@@ -648,6 +686,12 @@ export function analyzeButterflyBWB(data, legs, expDateObj, dte, credit, prefs, 
   let probs = null;
   if (lowerBE && upperBE && maxProfit > 0) {
     probs = calcButterflyProbs(price, lowerBE, centerStrike, upperBE, vol, dte, maxProfit);
+  } else if (lowerBE) {
+    probs = {
+      probMaxProfit: null,
+      probAnyProfit: calcPOW(price, lowerBE, vol, dte, optType),
+      tiers: [],
+    };
   }
 
   // Expected value -- probability-weighted return
@@ -663,6 +707,13 @@ export function analyzeButterflyBWB(data, legs, expDateObj, dte, credit, prefs, 
   const wingRatio = upperWing ? parseFloat((lowerWing / upperWing).toFixed(2)) : null;
   const crRatio   = maxLoss && maxLoss > 0 && isCredit
     ? parseFloat(((cr * 100) / maxLoss * 100).toFixed(1))
+    : null;
+  const creditDollars = isCredit ? cr * 100 : 0;
+  const creditCapturePct = isCredit && maxProfit && maxProfit > 0
+    ? parseFloat((creditDollars / maxProfit * 100).toFixed(1))
+    : null;
+  const profitWindowUpside = isCredit && maxProfit != null
+    ? parseFloat((maxProfit - creditDollars).toFixed(0))
     : null;
 
   const earningsCheck = checkEarningsRisk(earnings, expDateObj);
@@ -688,6 +739,9 @@ export function analyzeButterflyBWB(data, legs, expDateObj, dte, credit, prefs, 
     maxProfitUnlimited: payoff.maxProfitUnlimited,
     maxLossUnlimited: payoff.maxLossUnlimited,
     crRatio,
+    creditCapturePct,
+    openingCredit: isCredit ? parseFloat(creditDollars.toFixed(0)) : null,
+    profitWindowUpside,
     vol: pct(vol),
     em,
 
@@ -696,14 +750,16 @@ export function analyzeButterflyBWB(data, legs, expDateObj, dte, credit, prefs, 
     profitTiers:    probs?.tiers         || [],
     expectedValue: null,
 
-    greeks: greeks || null,
+    absDelta,
+    deltaSource: netGreeks?.source || 'BS',
+    greeks: netGreeks || greeks || null,
     iv: greeks?.iv || null,
 
     supports, resistances,
     earningsRisk: earningsCheck.risk,
     earningsDate: earningsCheck.date,
     modelNotes: modelNotes(data, {
-      greeks,
+      greeks: netGreeks || greeks,
       structureNote: 'Butterfly/BWB/ratio payoff now uses exact entered legs at expiration. Probability tiers are still estimated from a simplified profit zone.',
     }),
     payoff,

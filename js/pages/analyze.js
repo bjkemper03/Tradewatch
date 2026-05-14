@@ -41,6 +41,12 @@ function renderAnalyze() {
         '<input id="az-cr" placeholder="0.45" type="number" step="0.01" oninput="azUpdateCol()" style="font-family:var(--mono)">' +
       '</div>' +
     '</div>' +
+    '<div class="fld"><label>Entry Type</label>' +
+      '<select id="az-entry" onchange="azUpdateCol()">' +
+        '<option value="credit">Credit to open</option>' +
+        '<option value="debit">Debit to open</option>' +
+      '</select>' +
+    '</div>' +
     '<div class="fg2">' +
       '<div class="fld"><label>Collateral $ (estimate)</label>' +
         '<input id="az-col" placeholder="Auto" type="number" step="1" style="font-family:var(--mono)">' +
@@ -62,6 +68,8 @@ function azChangeStrat(s) {
   azStrat   = s;
   azLegData = (DEF[s] || [{ a:'BUY', t:'PUT', n:1, s:'' }]).map(function(l) { return Object.assign({}, l); });
   buildAzLegs();
+  var entry = $('az-entry');
+  if (entry) entry.value = isDebitStrat(s) ? 'debit' : 'credit';
   azUpdateCol();
 }
 
@@ -98,7 +106,8 @@ function buildAzLegs() {
 
 function azUpdateCol() {
   var cr  = safeNum($('az-cr') ? $('az-cr').value : 0);
-  var col = calcCollateral(azStrat, azLegData, cr);
+  var entryType = $('az-entry') ? $('az-entry').value : (isDebitStrat(azStrat) ? 'debit' : 'credit');
+  var col = calcCollateral(azStrat, azLegData, cr, entryType);
   var el  = $('az-col');
   if (el) el.value = col > 0 ? col.toFixed(0) : '';
 }
@@ -110,6 +119,7 @@ async function runAnalysis() {
   var ticker = $('az-tk') ? $('az-tk').value.trim().toUpperCase() : '';
   var expRaw = $('az-exp') ? $('az-exp').value.trim() : '';
   var credit = safeNum($('az-cr') ? $('az-cr').value : 0);
+  var entryType = $('az-entry') ? $('az-entry').value : (isDebitStrat(azStrat) ? 'debit' : 'credit');
   if (!ticker) { alert('Enter a ticker symbol'); return; }
 
   var btn = $('az-btn');
@@ -126,6 +136,7 @@ async function runAnalysis() {
         legs:     azLegData,
         expDate:  expRaw,
         credit:   credit,
+        entryType: entryType,
         strategy: azStrat,
         prefs: {
           cushionMin:    prefs.cushionMin,
@@ -158,7 +169,8 @@ async function runAnalysis() {
       price:         d.price,
       lastDate:      d.lastDate,
       credit:        credit,
-      collateral:    d.collateral != null ? d.collateral : calcCollateral(azStrat, azLegData, credit),
+      entryType:     entryType,
+      collateral:    d.collateral != null ? d.collateral : calcCollateral(azStrat, azLegData, credit, entryType),
       breakeven:     d.breakeven     || null,
       cushionPct:    d.cushionPct    || null,
       absDelta:      d.absDelta      || null,
@@ -263,7 +275,8 @@ function estimatePayoff(d, px) {
   var legs = azLegData || [];
   if (!legs.length) return null;
   var premium = safeNum($('az-cr') ? $('az-cr').value : d.credit || d.prem || d.debit || 0);
-  var netPremium = isDebitStrat(d.strategy) ? -premium : premium;
+  var entryType = $('az-entry') ? $('az-entry').value : (isDebitStrat(d.strategy) ? 'debit' : 'credit');
+  var netPremium = entryType === 'debit' ? -premium : premium;
   var perShare = d.strategy === 'COVERED CALL' ? (px - d.price) + premium : netPremium;
   for (var i = 0; i < legs.length; i++) {
     var leg = legs[i];
@@ -586,7 +599,10 @@ function renderAnalysisResult(d) {
     if (d.upperBE != null)      metrics.push(mc2('UPPER BE',    '$' + d.upperBE,              'var(--text)'));
     if (d.maxProfit != null || d.maxProfitUnlimited) metrics.push(mc2('MAX PROFIT', fmtRiskMoney(d.maxProfit, d.maxProfitUnlimited), '#22c55e'));
     if (d.maxLoss != null || d.maxLossUnlimited)     metrics.push(mc2('MAX LOSS',   fmtRiskMoney(d.maxLoss, d.maxLossUnlimited),     '#ef4444'));
+    if (d.openingCredit != null) metrics.push(mc2('OPEN CREDIT', '$' + d.openingCredit.toFixed(0), '#22c55e'));
+    if (d.profitWindowUpside != null) metrics.push(mc2('WINDOW UPSIDE', '$' + d.profitWindowUpside.toFixed(0), d.profitWindowUpside >= 0 ? '#22c55e' : '#ef4444'));
     if (d.crRatio != null)      metrics.push(mc2('CR/RISK',     d.crRatio + '%',              d.crRatio >= 20 ? '#22c55e' : d.crRatio >= 12 ? '#f59e0b' : '#ef4444'));
+    if (d.creditCapturePct != null) metrics.push(mc2('CREDIT CAPTURE', d.creditCapturePct + '%', d.creditCapturePct >= 60 ? '#22c55e' : d.creditCapturePct >= 35 ? '#f59e0b' : '#ef4444'));
   }
   if (sg === 'put_debit_spread' || sg === 'call_debit_spread') {
     if (d.breakeven != null)    metrics.push(mc2('BREAKEVEN',   '$' + d.breakeven,            'var(--text)'));

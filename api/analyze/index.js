@@ -96,7 +96,7 @@ export default async function handler(req, res) {
   if (req.method !== 'POST')   return res.status(405).json({ error: 'Method not allowed' });
 
   // ── Input validation ────────────────────────────────────────────────────
-  const { ticker, legs, expDate, credit, strategy, prefs } = req.body || {};
+  const { ticker, legs, expDate, credit, entryType, strategy, prefs } = req.body || {};
 
   if (!ticker) {
     return res.status(400).json({ ok: false, error: 'Missing ticker' });
@@ -175,7 +175,7 @@ export default async function handler(req, res) {
       case 'butterfly_bwb':
         result = analyzeButterflyBWB(
           data, legs, expDateObj, dte, credit, prefs,
-          isCreditStrategy(strategy)
+          entryType ? entryType === 'credit' : isCreditStrategy(strategy)
         );
         break;
 
