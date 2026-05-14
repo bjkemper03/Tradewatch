@@ -1,7 +1,7 @@
 // =============================================================================
 // js/tradeCalc.js -- Trade math: parsing, collateral, breakeven, BWB
-// Loaded by index.html as a plain script -- all functions are global.
-// No imports/exports. Depends on: STRAT_GROUPS (from index.html state)
+// Loaded as a plain script -- all functions are global.
+// No imports/exports. Depends on: STRAT_GROUPS and prefs from js/config.js.
 // =============================================================================
 
 // ---------------------------------------------------------------------------

@@ -1,8 +1,6 @@
 // =============================================================================
-// storage.js -- Data access layer
-// All data operations go through these functions.
-// Supabase-backed with RLS -- every query is automatically user-isolated.
-// Cache layer uses localStorage for speed (non-sensitive market data only).
+// js/storage.js -- LocalStorage and Supabase persistence helpers.
+// Trade, preference, baseline, journal, and cache data access lives here.
 // =============================================================================
 
 // ---------------------------------------------------------------------------
@@ -33,6 +31,48 @@ function cacheClear(prefix) {
       .filter(k => k.startsWith(prefix))
       .forEach(k => localStorage.removeItem(k));
   } catch (e) {}
+}
+
+// ---------------------------------------------------------------------------
+// Local app persistence
+// ---------------------------------------------------------------------------
+function saveTrades() {
+  localStorage.setItem(TK, JSON.stringify(trades));
+  if (_sbClient && currentUser) {
+    saveUserSettings({ ...prefs }).catch(e => console.warn('[OP] saveTrades settings sync failed:', e));
+  }
+}
+
+function saveHist() {
+  localStorage.setItem(HK, JSON.stringify(hist));
+  if (_sbClient && currentUser) {
+    saveBaseline(hist).catch(e => console.warn('[OP] saveHist Supabase sync failed:', e));
+  }
+}
+
+function savePrefs() {
+  localStorage.setItem(CK.prefs, JSON.stringify(prefs));
+  if (_sbClient && currentUser) {
+    saveUserSettings(prefs).catch(e => console.warn('[OP] savePrefs Supabase sync failed:', e));
+  }
+}
+
+function normalizeHist(raw) {
+  raw = raw || {};
+  return {
+    ...DEFAULT_HIST,
+    totalTrades:  raw.totalTrades  ?? raw.total_trades  ?? DEFAULT_HIST.totalTrades,
+    wins:         raw.wins         ?? DEFAULT_HIST.wins,
+    losses:       raw.losses       ?? DEFAULT_HIST.losses,
+    breakeven:    raw.breakeven    ?? DEFAULT_HIST.breakeven,
+    realizedPnl:  raw.realizedPnl  ?? raw.realized_pnl  ?? DEFAULT_HIST.realizedPnl,
+    winPct:       raw.winPct       ?? raw.win_pct       ?? DEFAULT_HIST.winPct,
+    avgWinPct:    raw.avgWinPct    ?? raw.avg_win_pct   ?? DEFAULT_HIST.avgWinPct,
+    avgLossPct:   raw.avgLossPct   ?? raw.avg_loss_pct  ?? DEFAULT_HIST.avgLossPct,
+    profitFactor: raw.profitFactor ?? raw.profit_factor ?? DEFAULT_HIST.profitFactor,
+    baselinePeriodValue: raw.baselinePeriodValue ?? raw.baseline_period_value ?? DEFAULT_HIST.baselinePeriodValue,
+    baselinePeriodUnit:  raw.baselinePeriodUnit  ?? raw.baseline_period_unit  ?? DEFAULT_HIST.baselinePeriodUnit
+  };
 }
 
 // ---------------------------------------------------------------------------
