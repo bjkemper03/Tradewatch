@@ -5,6 +5,8 @@
 //   mc2(), g3html(), showPage(), logFromAnalysis() from trades.js
 // =============================================================================
 
+var payoffShapeData = null;
+
 // ---------------------------------------------------------------------------
 // Render the analyze page form
 // ---------------------------------------------------------------------------
@@ -224,15 +226,18 @@ function fmtMoney(v) {
 function renderModelNotes(d) {
   var notes = d.modelNotes || [];
   if (!notes.length) return '';
-  return '<div style="display:flex;gap:6px;flex-wrap:wrap;margin:0 12px 10px">' +
-    notes.slice(0, 4).map(function(n) {
+  return '<details class="card" style="padding:10px 12px">' +
+    '<summary style="cursor:pointer;font-size:10px;color:var(--text3);font-weight:700;text-transform:uppercase;letter-spacing:.5px">Model assumptions</summary>' +
+    '<div style="display:grid;gap:6px;margin-top:9px">' +
+    notes.slice(0, 5).map(function(n) {
       var isWeak = n.level === 'weak';
-      return '<span style="display:inline-flex;align-items:center;gap:6px;background:' + (isWeak ? 'var(--red-dim)' : 'var(--yellow-dim)') + ';border:1px solid ' + (isWeak ? 'rgba(239,68,68,.25)' : 'rgba(245,158,11,.25)') + ';border-radius:7px;padding:6px 8px;font-size:10px;line-height:1.35;color:' + (isWeak ? '#fca5a5' : 'var(--yellow)') + '">' +
+      return '<div style="display:flex;align-items:flex-start;gap:7px;font-size:10px;line-height:1.45;color:var(--text2)">' +
         '<strong style="font-size:9px;text-transform:uppercase;letter-spacing:.4px">' + (isWeak ? 'Weak estimate' : 'Model') + '</strong>' +
-        '<span style="color:var(--text2)">' + n.msg + '</span>' +
-      '</span>';
+        '<span>' + n.msg + '</span>' +
+      '</div>';
     }).join('') +
-  '</div>';
+    '</div>' +
+  '</details>';
 }
 
 function estimatePayoff(d, px) {
@@ -256,6 +261,93 @@ function estimatePayoff(d, px) {
   return perShare * 100;
 }
 
+function payoffShapeMove(e, svg) {
+  if (!payoffShapeData || !svg) return;
+  var rect = svg.getBoundingClientRect();
+  var clientX = e.clientX;
+  if (e.touches && e.touches[0]) clientX = e.touches[0].clientX;
+  var rel = (clientX - rect.left) / rect.width;
+  rel = Math.max(0, Math.min(1, rel));
+
+  var d = payoffShapeData;
+  var stock = d.low + (d.high - d.low) * rel;
+  var pnl = estimatePayoff(d.result, stock);
+  if (pnl == null || !Number.isFinite(pnl)) return;
+
+  var sx = d.pad + (stock - d.low) / (d.high - d.low) * (d.w - d.pad * 2);
+  var sy = d.h - d.pad - (pnl - d.minY) / (d.maxY - d.minY) * (d.h - d.pad * 2);
+  var line = $('payoff-cursor-line');
+  var dot = $('payoff-cursor-dot');
+  var tip = $('payoff-tip');
+  if (line) {
+    line.setAttribute('x1', sx.toFixed(1));
+    line.setAttribute('x2', sx.toFixed(1));
+    line.style.display = 'block';
+  }
+  if (dot) {
+    dot.setAttribute('cx', sx.toFixed(1));
+    dot.setAttribute('cy', sy.toFixed(1));
+    dot.style.display = 'block';
+  }
+  if (tip) {
+    tip.style.display = 'block';
+    tip.style.left = Math.max(6, Math.min(rect.width - 138, sx / d.w * rect.width - 64)) + 'px';
+    tip.style.top = '14px';
+    tip.innerHTML = '<div style="font-size:9px;color:var(--text3);font-weight:700;text-transform:uppercase;letter-spacing:.4px">Stock price</div>' +
+      '<div style="font-family:var(--mono);font-size:13px;color:var(--text)">$' + stock.toFixed(2) + '</div>' +
+      '<div style="font-size:9px;color:var(--text3);font-weight:700;text-transform:uppercase;letter-spacing:.4px;margin-top:3px">Expiration P/L</div>' +
+      '<div style="font-family:var(--mono);font-size:13px;color:' + (pnl >= 0 ? '#22c55e' : '#ef4444') + '">' + fmtMoney(pnl) + '</div>';
+  }
+}
+
+function payoffShapeLeave() {
+  ['payoff-cursor-line', 'payoff-cursor-dot', 'payoff-tip'].forEach(function(id) {
+    var el = $(id);
+    if (el) el.style.display = 'none';
+  });
+}
+
+function payoffExactRows(d, payoffAt) {
+  var sg = d.strategyGroup || '';
+  var rows = [];
+  function row(label, px, note, kind) {
+    var pnl = px != null ? payoffAt(px) : null;
+    rows.push({ label: label, px: px, pnl: pnl, note: note || '', kind: kind || '' });
+  }
+  var sellPut = (azLegData || []).find(function(l) { return l.a === 'SELL' && l.t === 'PUT'; });
+  var buyPut = (azLegData || []).find(function(l) { return l.a === 'BUY' && l.t === 'PUT'; });
+  var sellCall = (azLegData || []).find(function(l) { return l.a === 'SELL' && l.t === 'CALL'; });
+  var buyCall = (azLegData || []).find(function(l) { return l.a === 'BUY' && l.t === 'CALL'; });
+
+  row('Now', safeNum(d.price), '', 'now');
+  if (d.breakeven) row('Breakeven', safeNum(d.breakeven), 'P/L is about $0', 'be');
+  if (d.lowerBE) row('Lower BE', safeNum(d.lowerBE), 'Lower profit boundary', 'be');
+  if (d.upperBE) row('Upper BE', safeNum(d.upperBE), 'Upper profit boundary', 'be');
+  if (d.putBreakeven) row('Put BE', safeNum(d.putBreakeven), 'Lower profit boundary', 'be');
+  if (d.callBreakeven) row('Call BE', safeNum(d.callBreakeven), 'Upper profit boundary', 'be');
+
+  if ((sg === 'csp' || sg === 'credit_spread') && sellPut) {
+    row('Max profit starts', safeNum(sellPut.s), 'Short put expires worthless above here', 'profit');
+    if (sg === 'credit_spread' && buyPut) row('Max loss starts', safeNum(buyPut.s), 'Spread is fully ITM below here', 'loss');
+    if (sg === 'csp') rows.push({ label:'Max loss endpoint', px: 0, pnl: d.maxLoss != null ? -safeNum(d.maxLoss) : payoffAt(0.01), note:'Theoretical if stock goes to $0', kind:'loss' });
+  } else if (sg === 'covered_call' && sellCall) {
+    row('Max profit starts', safeNum(sellCall.s), 'Called away above here', 'profit');
+  } else if (sg === 'call_debit_spread' && sellCall) {
+    row('Max profit starts', safeNum(sellCall.s), 'Spread reaches full width above here', 'profit');
+  } else if (sg === 'put_debit_spread' && sellPut) {
+    row('Max profit starts', safeNum(sellPut.s), 'Spread reaches full width below here', 'profit');
+  } else if (sg === 'iron_condor' || sg === 'iron_butterfly') {
+    if (sellPut) row('Put short', safeNum(sellPut.s), 'Max-profit tent starts above here', 'short');
+    if (sellCall) row('Call short', safeNum(sellCall.s), 'Max-profit tent ends below here', 'short');
+    if (buyPut) row('Put max loss', safeNum(buyPut.s), 'Lower wing fully breached', 'loss');
+    if (buyCall) row('Call max loss', safeNum(buyCall.s), 'Upper wing fully breached', 'loss');
+  }
+
+  return rows.filter(function(r, idx, arr) {
+    return arr.findIndex(function(o) { return o.label === r.label && Math.abs(safeNum(o.px) - safeNum(r.px)) < 0.01; }) === idx;
+  });
+}
+
 function renderPayoffShape(d) {
   if (!d.price) return '';
   var strikes = (azLegData || []).map(function(l) { return safeNum(l.s); }).filter(function(s) { return s > 0; });
@@ -269,8 +361,8 @@ function renderPayoffShape(d) {
   var low = Math.max(0.01, Math.min(d.price * 0.75, minAnchor - span * 0.35));
   var high = Math.max(d.price * 1.25, maxAnchor + span * 0.35);
   var points = [];
-  for (var i = 0; i <= 48; i++) {
-    var px = low + (high - low) * i / 48;
+  for (var i = 0; i <= 96; i++) {
+    var px = low + (high - low) * i / 96;
     var pnl = estimatePayoff(d, px);
     if (pnl == null || !Number.isFinite(pnl)) return '';
     points.push({ px: px, pnl: pnl });
@@ -287,46 +379,33 @@ function renderPayoffShape(d) {
     var v = estimatePayoff(d, px);
     return v == null || !Number.isFinite(v) ? null : v;
   }
-  function pointLabel(label, px, kind) {
-    if (!px || px < low || px > high) return null;
-    return { label: label, px: px, pnl: payoffAt(px), kind: kind || 'marker' };
-  }
-  var markers = [];
-  markers.push(pointLabel('Now', d.price, 'now'));
-  if (d.breakeven) markers.push(pointLabel('BE', safeNum(d.breakeven), 'be'));
-  if (d.lowerBE) markers.push(pointLabel('Lower BE', safeNum(d.lowerBE), 'be'));
-  if (d.upperBE) markers.push(pointLabel('Upper BE', safeNum(d.upperBE), 'be'));
-  if (d.putBreakeven) markers.push(pointLabel('Put BE', safeNum(d.putBreakeven), 'be'));
-  if (d.callBreakeven) markers.push(pointLabel('Call BE', safeNum(d.callBreakeven), 'be'));
-  (azLegData || []).forEach(function(leg) {
-    var label = (leg.a === 'SELL' ? 'Short ' : 'Long ') + (leg.t || '').slice(0, 1) + ' ' + leg.s;
-    markers.push(pointLabel(label, safeNum(leg.s), leg.a === 'SELL' ? 'short' : 'long'));
+  var checkpointRows = payoffExactRows(d, payoffAt);
+  var markers = checkpointRows.filter(function(m) {
+    return m.px > 0 && m.px >= low && m.px <= high && m.kind !== 'loss';
   });
-  markers = markers.filter(Boolean).filter(function(m, idx, arr) {
-    return arr.findIndex(function(o) { return o.label === m.label && Math.abs(o.px - m.px) < 0.01; }) === idx;
-  });
-  var maxPoint = points.reduce(function(best, p) { return p.pnl > best.pnl ? p : best; }, points[0]);
-  var minPoint = points.reduce(function(best, p) { return p.pnl < best.pnl ? p : best; }, points[0]);
-  var checkpointRows = markers.slice(0, 8);
-  checkpointRows.push({ label:'Max profit zone', px:maxPoint.px, pnl:maxPoint.pnl, kind:'profit' });
-  checkpointRows.push({ label:'Max loss zone', px:minPoint.px, pnl:minPoint.pnl, kind:'loss' });
   var markerSvg = markers.slice(0, 8).map(function(m, idx) {
-    var col = m.kind === 'now' ? 'var(--blue2)' : m.kind === 'be' ? 'var(--yellow)' : m.kind === 'short' ? '#fca5a5' : '#86efac';
+    var col = m.kind === 'now' ? 'var(--blue2)' : m.kind === 'be' ? 'var(--yellow)' : m.kind === 'short' ? '#fca5a5' : m.kind === 'profit' ? '#22c55e' : '#86efac';
     var mx = x({ px: m.px });
     var ty = idx % 2 ? h - 5 : 10;
     return '<line x1="' + mx.toFixed(1) + '" y1="' + pad + '" x2="' + mx.toFixed(1) + '" y2="' + (h - pad) + '" stroke="' + col + '" stroke-width="1" stroke-dasharray="3 4" opacity=".75"/>' +
-      '<text x="' + mx.toFixed(1) + '" y="' + ty + '" text-anchor="middle" fill="' + col + '" font-size="6" font-family="monospace">' + m.label.replace(/ /g, '') + '</text>';
+      '<text x="' + mx.toFixed(1) + '" y="' + ty + '" text-anchor="middle" fill="' + col + '" font-size="6" font-family="monospace">' + m.label.replace(/Max profit starts/g, 'MaxProfit').replace(/Breakeven/g, 'BE').replace(/ /g, '') + '</text>';
   }).join('');
+  payoffShapeData = { low: low, high: high, minY: minY, maxY: maxY, w: w, h: h, pad: pad, result: d };
   return '<div class="card">' +
     '<div style="display:flex;justify-content:space-between;gap:10px;align-items:center;margin-bottom:8px">' +
       '<div style="font-size:10px;color:var(--text3);font-weight:600;text-transform:uppercase;letter-spacing:.5px">P/L Shape at Expiration</div>' +
-      '<div style="font-size:9px;color:var(--text3);font-family:var(--mono)">per contract</div>' +
+      '<div style="font-size:9px;color:var(--text3);font-family:var(--mono)">drag across curve</div>' +
     '</div>' +
-    '<svg viewBox="0 0 ' + w + ' ' + h + '" style="width:100%;height:140px;display:block;background:var(--surface2);border:1px solid var(--border);border-radius:8px">' +
+    '<div style="position:relative">' +
+    '<svg viewBox="0 0 ' + w + ' ' + h + '" onpointermove="payoffShapeMove(event,this)" onpointerleave="payoffShapeLeave()" style="width:100%;height:150px;display:block;background:var(--surface2);border:1px solid var(--border);border-radius:8px;touch-action:none;cursor:crosshair">' +
       '<line x1="' + pad + '" y1="' + zeroY.toFixed(1) + '" x2="' + (w - pad) + '" y2="' + zeroY.toFixed(1) + '" stroke="var(--border2)" stroke-width="1"/>' +
       markerSvg +
       '<polyline points="' + line + '" fill="none" stroke="var(--green)" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>' +
+      '<line id="payoff-cursor-line" x1="0" y1="' + pad + '" x2="0" y2="' + (h - pad) + '" stroke="var(--blue2)" stroke-width="1" stroke-dasharray="4 4" style="display:none"/>' +
+      '<circle id="payoff-cursor-dot" cx="0" cy="0" r="3" fill="var(--blue2)" stroke="#0b0e17" stroke-width="1.5" style="display:none"/>' +
     '</svg>' +
+    '<div id="payoff-tip" style="display:none;position:absolute;width:128px;background:var(--surface3);border:1px solid var(--border2);border-radius:8px;padding:7px 8px;box-shadow:0 8px 24px rgba(0,0,0,.35);pointer-events:none;z-index:3"></div>' +
+    '</div>' +
     '<div style="display:flex;justify-content:space-between;font-size:10px;color:var(--text3);margin-top:5px;font-family:var(--mono)"><span>$' + low.toFixed(0) + '</span><span>Now $' + d.price + '</span><span>$' + high.toFixed(0) + '</span></div>' +
     '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(132px,1fr));gap:6px;margin-top:10px">' +
       checkpointRows.map(function(m) {
@@ -334,19 +413,22 @@ function renderPayoffShape(d) {
         return '<div style="background:var(--surface2);border:1px solid var(--border);border-radius:7px;padding:7px 8px;min-width:0">' +
           '<div style="font-size:9px;color:var(--text3);font-weight:700;text-transform:uppercase;letter-spacing:.4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + m.label + '</div>' +
           '<div style="display:flex;justify-content:space-between;gap:8px;align-items:baseline;margin-top:3px;font-family:var(--mono)">' +
-            '<span style="font-size:11px;color:var(--text2)">$' + safeNum(m.px).toFixed(2) + '</span>' +
+            '<span style="font-size:11px;color:var(--text2)">' + (m.px != null ? '$' + safeNum(m.px).toFixed(2) : 'N/A') + '</span>' +
             '<span style="font-size:12px;font-weight:800;color:' + col + '">' + fmtMoney(m.pnl) + '</span>' +
           '</div>' +
+          (m.note ? '<div style="font-size:9px;color:var(--text3);line-height:1.35;margin-top:3px">' + m.note + '</div>' : '') +
         '</div>';
       }).join('') +
     '</div>' +
   '</div>';
 }
 
-function renderCompactLevels(d) {
+function renderTradeContext(d) {
   var supports = d.supports || [];
   var resistances = d.resistances || [];
-  if (!supports.length && !resistances.length && !d.exitSignal && !d.sma20) return '';
+  var hasWheel = !!d.wheelScenarios;
+  var hasProb = d.probWorthless != null || d.probAnyProfit != null || d.probTouchShort != null || d.probTouchPutShort != null || d.probTouchCallShort != null;
+  if (!supports.length && !resistances.length && !d.exitSignal && !d.sma20 && !d.em && !hasWheel && !hasProb && d.dailyDecay == null) return '';
   function levelTags(level, kind) {
     var list = kind === 'support' ? (d.supportDetails || []) : (d.resistanceDetails || []);
     var detail = list.find(function(x) { return Math.abs(safeNum(x.price) - safeNum(level)) < 0.01; });
@@ -368,18 +450,49 @@ function renderCompactLevels(d) {
       '</span>';
     }).join('');
   }
+  function mini(label, val, color, sub) {
+    return '<div style="background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:9px 10px;min-width:0">' +
+      '<div style="font-size:9px;color:var(--text3);font-weight:700;text-transform:uppercase;letter-spacing:.5px">' + label + '</div>' +
+      '<div style="font-family:var(--mono);font-size:15px;font-weight:800;color:' + (color || 'var(--text)') + ';margin-top:3px">' + val + '</div>' +
+      (sub ? '<div style="font-size:9px;color:var(--text3);line-height:1.35;margin-top:3px">' + sub + '</div>' : '') +
+    '</div>';
+  }
+  var sg = d.strategyGroup || '';
+  var probTiles = '';
+  if (d.probWorthless != null) probTiles += mini(sg === 'long_call' || sg === 'long_put' ? 'Exp worthless' : 'Exp worthless', Math.round(d.probWorthless * 100) + '%', sg === 'long_call' || sg === 'long_put' ? '#ef4444' : '#22c55e', 'At expiration');
+  if (d.probAnyProfit != null) probTiles += mini('Exp profit', Math.round(d.probAnyProfit * 100) + '%', '#22c55e', 'At expiration');
+  if (d.probTouchShort != null) probTiles += mini('Touch short', Math.round(d.probTouchShort * 100) + '%', '#f59e0b', 'Before expiration');
+  if (d.probTouchPutShort != null || d.probTouchCallShort != null) {
+    probTiles += mini('Touch shorts', (d.probTouchPutShort != null ? 'P ' + Math.round(d.probTouchPutShort * 100) + '%' : '') + (d.probTouchCallShort != null ? ' C ' + Math.round(d.probTouchCallShort * 100) + '%' : ''), '#f59e0b', 'Before expiration');
+  }
+  var wheelHtml = '';
+  if (hasWheel) {
+    var ws = d.wheelScenarios;
+    var yd = ws.ifNotAssigned?.yieldData || ws.ifNotCalled?.yieldData || null;
+    wheelHtml = '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px;margin-top:10px">' +
+      (ws.ifAssigned ? mini('If assigned', '$' + ws.ifAssigned.effectiveCostBasis, '#22c55e', ws.ifAssigned.note) : '') +
+      (ws.ifCalledAway ? mini('If called away', '$' + ws.ifCalledAway.totalPerShare, '#22c55e', ws.ifCalledAway.note) : '') +
+      (yd ? mini('Trade return', yd.tradeReturnPct + '%', '#22c55e', 'Monthly ' + yd.monthlyPct + '% / Annualized ' + yd.annualizedPct + '%') : '') +
+    '</div>';
+  }
   return '<div class="card">' +
+    '<div style="font-size:10px;color:var(--text3);font-weight:600;text-transform:uppercase;letter-spacing:.5px;margin-bottom:10px">Trade Context</div>' +
+    '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:8px;margin-bottom:10px">' +
+      (d.em != null ? mini('Expected move', '&plusmn;$' + d.em, '#f59e0b', 'One-volatility move by expiration') : '') +
+      (d.dailyDecay != null ? mini('Est daily decay', '~$' + (d.dailyDecay * 100).toFixed(2), '#f59e0b', 'Approx option value decay per day') : '') +
+      probTiles +
+      (d.exitSignal ? mini('Exit trigger', '$' + d.exitSignal, '#fca5a5', 'Stock price break level') : '') +
+    '</div>' +
     '<div style="display:flex;justify-content:space-between;gap:12px;align-items:flex-start">' +
-      '<div style="flex:1">' +
-        '<div style="font-size:10px;color:var(--text3);font-weight:600;text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px">Key Levels</div>' +
+      '<div style="flex:1;min-width:0">' +
         '<div style="display:flex;gap:18px;flex-wrap:wrap">' +
           (supports.length ? '<div><div style="font-size:9px;color:var(--green);letter-spacing:1px;margin-bottom:4px">SUPPORT</div><div>' + levelHtml(supports, 'support') + '</div></div>' : '') +
           (resistances.length ? '<div><div style="font-size:9px;color:var(--red);letter-spacing:1px;margin-bottom:4px">RESISTANCE</div><div>' + levelHtml(resistances, 'resistance') + '</div></div>' : '') +
         '</div>' +
       '</div>' +
-      (d.exitSignal ? '<div style="font-size:10px;color:#fca5a5;border:1px solid rgba(239,68,68,.2);background:var(--red-dim);border-radius:7px;padding:7px 9px;white-space:nowrap">Exit below $' + d.exitSignal + '</div>' : '') +
     '</div>' +
     (d.sma20 ? '<div style="font-size:10px;color:var(--text3);margin-top:8px">SMA20 $' + d.sma20 + ' / SMA50 $' + d.sma50 + '</div>' : '') +
+    wheelHtml +
   '</div>';
 }
 
@@ -411,7 +524,6 @@ function renderAnalysisResult(d) {
     '</div>' +
   '</div>';
   html += renderGreekBox(d);
-  html += renderModelNotes(d);
 
   // ── Metrics grid ─────────────────────────────────────────────────────────
   var metrics = [];
@@ -425,8 +537,6 @@ function renderAnalysisResult(d) {
     if (d.crWidthPct != null)   metrics.push(mc2('CR/WIDTH',     d.crWidthPct + '%',              d.crWidthPct >= prefs.creditWidthMin ? '#22c55e' : '#f59e0b'));
     if (d.maxProfit != null)    metrics.push(mc2('MAX PROFIT',   '$' + d.maxProfit.toFixed(0),    '#22c55e'));
     if (d.maxLoss != null)      metrics.push(mc2('MAX LOSS',     '$' + d.maxLoss.toFixed(0),      '#ef4444'));
-    if (d.probWorthless != null)metrics.push(mc2('EXP WORTHLESS', Math.round(d.probWorthless * 100) + '%', '#22c55e'));
-    if (d.probTouchShort != null)metrics.push(mc2('TOUCH SHORT', Math.round(d.probTouchShort * 100) + '%', '#f59e0b'));
   }
   if (sg === 'iron_condor' || sg === 'iron_butterfly') {
     if (d.putCushionPct != null)  metrics.push(mc2('PUT CUSHION',     d.putCushionPct + '%',           cushC(d.putCushionPct)));
@@ -435,8 +545,6 @@ function renderAnalysisResult(d) {
     if (d.callBreakeven != null)  metrics.push(mc2('CALL BE',         '$' + d.callBreakeven,           'var(--text)'));
     if (d.maxProfit != null)      metrics.push(mc2('MAX PROFIT',      '$' + d.maxProfit.toFixed(0),    '#22c55e'));
     if (d.maxLoss != null)        metrics.push(mc2('MAX LOSS',        '$' + d.maxLoss.toFixed(0),      '#ef4444'));
-    if (d.probMaxProfit != null)  metrics.push(mc2('EXP MAX PROFIT', Math.round(d.probMaxProfit * 100) + '%', '#f59e0b'));
-    if (d.probAnyProfit != null)  metrics.push(mc2('EXP PROFIT',     Math.round(d.probAnyProfit * 100) + '%', '#22c55e'));
   }
   if (sg === 'bwb' || sg === 'butterfly' || sg === 'ratio_spread') {
     if (d.lowerBE != null)      metrics.push(mc2('LOWER BE',    '$' + d.lowerBE,              'var(--text)'));
@@ -444,8 +552,6 @@ function renderAnalysisResult(d) {
     if (d.maxProfit != null)    metrics.push(mc2('MAX PROFIT',  '$' + d.maxProfit.toFixed(0), '#22c55e'));
     if (d.maxLoss != null)      metrics.push(mc2('MAX LOSS',    '$' + d.maxLoss.toFixed(0),   '#ef4444'));
     if (d.crRatio != null)      metrics.push(mc2('CR/RISK',     d.crRatio + '%',              d.crRatio >= 20 ? '#22c55e' : d.crRatio >= 12 ? '#f59e0b' : '#ef4444'));
-    if (d.probMaxProfit != null)metrics.push(mc2('EXP MAX',    Math.round(d.probMaxProfit * 100) + '%', '#f59e0b'));
-    if (d.probAnyProfit != null)metrics.push(mc2('EXP PROFIT', Math.round(d.probAnyProfit * 100) + '%', '#22c55e'));
   }
   if (sg === 'put_debit_spread' || sg === 'call_debit_spread') {
     if (d.breakeven != null)    metrics.push(mc2('BREAKEVEN',   '$' + d.breakeven,            'var(--text)'));
@@ -453,16 +559,11 @@ function renderAnalysisResult(d) {
     if (d.maxProfit != null)    metrics.push(mc2('MAX PROFIT',  '$' + d.maxProfit.toFixed(0), '#22c55e'));
     if (d.maxLoss != null)      metrics.push(mc2('MAX LOSS',    '$' + d.maxLoss.toFixed(0),   '#ef4444'));
     if (d.riskReward != null)   metrics.push(mc2('RISK/REWARD', d.riskReward + ':1',          d.riskReward < 1 ? '#22c55e' : d.riskReward < 2 ? '#f59e0b' : '#ef4444'));
-    if (d.probAnyProfit != null)metrics.push(mc2('EXP PROFIT', Math.round(d.probAnyProfit * 100) + '%', '#22c55e'));
   }
   if (sg === 'long_call' || sg === 'long_put') {
     if (d.breakeven != null)    metrics.push(mc2('BREAKEVEN',     '$' + d.breakeven,                         'var(--text)'));
     if (d.maxLoss != null)      metrics.push(mc2('MAX LOSS',      '$' + d.maxLoss.toFixed(0),               '#ef4444'));
-    if (d.probWorthless != null)metrics.push(mc2('EXP WORTHLESS',Math.round(d.probWorthless * 100) + '%',  '#ef4444'));
-    if (d.dailyDecay != null)   metrics.push(mc2('DAILY DECAY',   '~$' + (d.dailyDecay * 100).toFixed(2),  '#f59e0b'));
   }
-
-  if (d.em != null) metrics.push(mc2('EXP MOVE', '\u00b1$' + d.em, '#f59e0b'));
 
   var earnCol = d.earningsRisk ? '#ef4444' : '#22c55e';
   var earnVal = d.earningsRisk
@@ -471,9 +572,10 @@ function renderAnalysisResult(d) {
   metrics.push(mc2('EARNINGS', earnVal, earnCol));
 
   html += renderMetricGrid(metrics);
+  html += renderTradeContext(d);
 
   // ── Wheel scenarios ───────────────────────────────────────────────────────
-  if (d.wheelScenarios) {
+  if (false && d.wheelScenarios) {
     var ws = d.wheelScenarios;
     html += '<div class="card"><div style="font-size:10px;color:var(--text3);font-weight:600;text-transform:uppercase;letter-spacing:.5px;margin-bottom:10px">Wheel Scenarios</div>';
     if (ws.ifAssigned) {
@@ -561,8 +663,8 @@ function renderAnalysisResult(d) {
   }
 
   // ── Key levels ────────────────────────────────────────────────────────────
-  html += renderCompactLevels(d);
   html += renderPayoffShape(d);
+  html += renderModelNotes(d);
 
   // ── Log trade button ──────────────────────────────────────────────────────
   html += '<div style="padding:0 12px"><button class="btn btn-success btn-w" onclick="logFromAnalysis()">&check; I TOOK THIS TRADE -- LOG IT</button></div>';
