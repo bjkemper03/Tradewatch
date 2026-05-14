@@ -53,7 +53,7 @@ async function initApp() {
         getUserSettings(),
         getBaseline()
       ]);
-      if (sbTrades && sbTrades.length) trades = sbTrades;
+      if (Array.isArray(sbTrades)) trades = sbTrades;
       if (sbPrefs) prefs = sbPrefs;
       if (sbHist) hist = normalizeHist({ ...hist, ...sbHist });
       localStorage.setItem(TK, JSON.stringify(trades));

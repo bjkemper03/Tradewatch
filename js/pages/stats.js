@@ -36,6 +36,16 @@ function tradePnlDollars(t) {
   return cr * 100 * contracts * pct / 100;
 }
 
+function tradeIsWin(t) {
+  if (t.closeReason === 'PROFIT') return true;
+  return tradePnlDollars(t) > 0;
+}
+
+function tradeIsLoss(t) {
+  if (t.closeReason === 'STOP') return true;
+  return tradePnlDollars(t) < 0;
+}
+
 function rangeStartFor(key, endDate) {
   if (key === 'ALL') return null;
   var days = { '1D':1, '5D':5, '1M':30, '3M':90, '1Y':365, '5Y':1825 }[key] || 0;
@@ -204,10 +214,10 @@ function renderStats() {
   var el = $('page-stats');
   if (!el) return;
 
-  var closed       = trades.filter(function(t) { return t.status === 'CLOSED' && t.currentPnlPct !== ''; });
+  var closed       = trades.filter(function(t) { return t.status === 'CLOSED'; });
   var open         = trades.filter(function(t) { return t.status === 'OPEN'; });
-  var closedWins   = closed.filter(function(t) { return tradePnlDollars(t) > 0; }).length;
-  var closedLosses = closed.filter(function(t) { return tradePnlDollars(t) < 0; }).length;
+  var closedWins   = closed.filter(tradeIsWin).length;
+  var closedLosses = closed.filter(tradeIsLoss).length;
   var nTotal       = safeNum(hist.totalTrades) + closed.length;
   var nWins        = safeNum(hist.wins) + closedWins;
   var nLosses      = safeNum(hist.losses) + closedLosses;
@@ -221,8 +231,8 @@ function renderStats() {
   var colInUse     = open.reduce(function(a, t) { return a + safeNum(t.maxRisk); }, 0);
   var series       = buildPnlSeries(closed, startSize);
 
-  var loggedWinPcts  = closed.filter(function(t) { return tradePnlDollars(t) > 0; }).map(function(t) { return safeNum(t.currentPnlPct); });
-  var loggedLossPcts = closed.filter(function(t) { return tradePnlDollars(t) < 0; }).map(function(t) { return safeNum(t.currentPnlPct); });
+  var loggedWinPcts  = closed.filter(function(t) { return tradeIsWin(t) && t.currentPnlPct !== ''; }).map(function(t) { return safeNum(t.currentPnlPct); });
+  var loggedLossPcts = closed.filter(function(t) { return tradeIsLoss(t) && t.currentPnlPct !== ''; }).map(function(t) { return safeNum(t.currentPnlPct); });
   var loggedGrossWin  = closed.reduce(function(a, t) { var d = tradePnlDollars(t); return d > 0 ? a + d : a; }, 0);
   var loggedGrossLoss = Math.abs(closed.reduce(function(a, t) { var d = tradePnlDollars(t); return d < 0 ? a + d : a; }, 0));
 
