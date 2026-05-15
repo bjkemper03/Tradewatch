@@ -319,10 +319,10 @@ export function analyzeCreditSpread(data, legs, expDateObj, dte, credit, prefs) 
   if (earningsCheck.risk)                             issues.push({ level:'critical', weight:5, msg:`Earnings ${earningsCheck.date} falls within expiration` });
   if (cushionPct < cushMin)                           issues.push({ level:'critical', weight:5, msg:`${cushionPct}% cushion below your ${cushMin}% minimum` });
   if (absDelta && absDelta > deltaMax)                issues.push({ level:'warning', weight:3, msg:`Delta ${absDelta.toFixed(3)} above your ${deltaMax} target` });
-  if (crWidthPct < crwMin)                            issues.push({ level:'warning',  msg:`Credit is only ${crWidthPct}% of spread width -- low return on risk` });
+  if (crWidthPct < crwMin)                            issues.push({ level:'warning', weight:2, msg:`Credit is only ${crWidthPct}% of spread width -- low return on risk` });
   if (dte < dteMin)                                   issues.push({ level:'warning',  msg:`${dte} DTE below your ${dteMin} minimum` });
   if (dte > dteMax)                                   issues.push({ level:'warning',  msg:`${dte} DTE above your ${dteMax} maximum` });
-  if (isPut && nearestSupport && shortStrike > nearestSupport) issues.push({ level:'warning', msg:`Short put $${shortStrike} sits above nearest support $${nearestSupport} -- support is not protecting the strike` });
+  if (isPut && nearestSupport && shortStrike > nearestSupport) issues.push({ level:'note', weight:0, msg:`Context: short put $${shortStrike} sits above nearest support $${nearestSupport}` });
   if (!strikeOutsideEM && em)                         issues.push({ level:'warning', weight:3, msg:`Short strike inside 1SD expected move ($${em})` });
 
   return {

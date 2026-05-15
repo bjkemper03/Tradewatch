@@ -364,7 +364,7 @@ function payoffExactRows(d, payoffAt) {
       };
     });
     if (isSpreadGroup(sg0)) {
-      var keep = { now: true, short: true, long: true, wing: true };
+      var keep = { be: true, short: true, long: true, wing: true, loss: true };
       rows0 = rows0.filter(function(m) { return keep[m.kind]; }).slice(0, 4);
     }
     return rows0;
@@ -447,7 +447,7 @@ function renderPayoffShape(d) {
   }
   var checkpointRows = payoffExactRows(d, payoffAt);
   var markers = checkpointRows.filter(function(m) {
-    return m.px > 0 && m.px >= low && m.px <= high && m.kind !== 'loss';
+    return m.px > 0 && m.px >= low && m.px <= high;
   });
   var markerSvg = markers.slice(0, 8).map(function(m, idx) {
     var col = m.kind === 'now' ? 'var(--blue2)' : m.kind === 'be' ? 'var(--yellow)' : m.kind === 'short' ? '#fca5a5' : m.kind === 'profit' ? '#22c55e' : '#86efac';
@@ -583,7 +583,7 @@ function renderAnalysisResult(d) {
       '<div style="font-size:11px;color:var(--text2);margin-top:4px;line-height:1.6">' +
         reasons.map(function(r) {
           var ic  = issues.find(function(i) { return i.msg === r; });
-          var col = ic ? (ic.level === 'critical' ? '#ef4444' : '#f59e0b') : '#22c55e';
+          var col = ic ? (ic.level === 'critical' ? '#ef4444' : ic.level === 'note' ? 'var(--text2)' : '#f59e0b') : '#22c55e';
           return '<span style="color:' + col + '">' + r + '</span>';
         }).join('<br>') +
       '</div>' +
@@ -602,7 +602,9 @@ function renderAnalysisResult(d) {
   var metrics = [];
   var sg = d.strategyGroup || '';
 
-  metrics.push(mc2('LIVE PRICE', d.price ? '$' + safeNum(d.price).toFixed(2) : 'N/A', 'var(--text)'));
+  if (!isSpreadGroup(sg)) {
+    metrics.push(mc2('LIVE PRICE', d.price ? '$' + safeNum(d.price).toFixed(2) : 'N/A', 'var(--text)'));
+  }
 
   if (sg === 'credit_spread' || sg === 'csp' || sg === 'covered_call') {
     if (d.cushionPct != null)   metrics.push(mc2('CUSHION',      d.cushionPct + '%',              cushC(d.cushionPct)));
