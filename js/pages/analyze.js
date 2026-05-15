@@ -229,6 +229,10 @@ function renderMetricGrid(metrics) {
   return '<div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin:0 12px 10px">' + items.join('') + '</div>';
 }
 
+function isSpreadGroup(sg) {
+  return ['credit_spread','put_debit_spread','call_debit_spread','iron_condor','iron_butterfly'].indexOf(sg) !== -1;
+}
+
 function fmtMoney(v) {
   if (v == null || !Number.isFinite(safeNum(v))) return 'N/A';
   var n = safeNum(v);
@@ -349,7 +353,8 @@ function payoffShapeLeave() {
 
 function payoffExactRows(d, payoffAt) {
   if (d.payoff && d.payoff.checkpoints && d.payoff.checkpoints.length) {
-    return d.payoff.checkpoints.map(function(m) {
+    var sg0 = d.strategyGroup || '';
+    var rows0 = d.payoff.checkpoints.map(function(m) {
       return {
         label: m.label,
         px: m.px,
@@ -358,6 +363,11 @@ function payoffExactRows(d, payoffAt) {
         kind: m.kind || ''
       };
     });
+    if (isSpreadGroup(sg0)) {
+      var keep = { now: true, short: true, long: true, wing: true };
+      rows0 = rows0.filter(function(m) { return keep[m.kind]; }).slice(0, 4);
+    }
+    return rows0;
   }
   var sg = d.strategyGroup || '';
   var rows = [];
@@ -371,7 +381,7 @@ function payoffExactRows(d, payoffAt) {
   var buyCall = (azLegData || []).find(function(l) { return l.a === 'BUY' && l.t === 'CALL'; });
 
   row('Now', safeNum(d.price), '', 'now');
-  if (d.breakeven) row('Breakeven', safeNum(d.breakeven), 'P/L is about $0', 'be');
+  if (d.breakeven && !isSpreadGroup(sg)) row('Breakeven', safeNum(d.breakeven), 'P/L is about $0', 'be');
   if (d.lowerBE) row('Lower BE', safeNum(d.lowerBE), 'Lower profit boundary', 'be');
   if (d.upperBE) row('Upper BE', safeNum(d.upperBE), 'Upper profit boundary', 'be');
   if (d.putBreakeven) row('Put BE', safeNum(d.putBreakeven), 'Lower profit boundary', 'be');
@@ -443,8 +453,9 @@ function renderPayoffShape(d) {
     var col = m.kind === 'now' ? 'var(--blue2)' : m.kind === 'be' ? 'var(--yellow)' : m.kind === 'short' ? '#fca5a5' : m.kind === 'profit' ? '#22c55e' : '#86efac';
     var mx = x({ px: m.px });
     var ty = idx % 2 ? h - 5 : 10;
-    return '<line x1="' + mx.toFixed(1) + '" y1="' + pad + '" x2="' + mx.toFixed(1) + '" y2="' + (h - pad) + '" stroke="' + col + '" stroke-width="1" stroke-dasharray="3 4" opacity=".75"/>' +
-      '<text x="' + mx.toFixed(1) + '" y="' + ty + '" text-anchor="middle" fill="' + col + '" font-size="6" font-family="monospace">' + m.label.replace(/Max profit starts/g, 'MaxProfit').replace(/Breakeven/g, 'BE').replace(/ /g, '') + '</text>';
+    var label = isSpreadGroup(d.strategyGroup || '') && m.kind !== 'now' ? '' : m.label.replace(/Max profit starts/g, 'MaxProfit').replace(/Breakeven/g, 'BE').replace(/ /g, '');
+    return '<line x1="' + mx.toFixed(1) + '" y1="' + pad + '" x2="' + mx.toFixed(1) + '" y2="' + (h - pad) + '" stroke="' + col + '" stroke-width="1" stroke-dasharray="3 4" opacity=".65"/>' +
+      (label ? '<text x="' + mx.toFixed(1) + '" y="' + ty + '" text-anchor="middle" fill="' + col + '" font-size="6" font-family="monospace">' + label + '</text>' : '');
   }).join('');
   payoffShapeData = { low: low, high: high, minY: minY, maxY: maxY, w: w, h: h, pad: pad, result: d };
   return '<div class="card">' +
@@ -515,8 +526,8 @@ function renderTradeContext(d) {
   }
   var sg = d.strategyGroup || '';
   var probTiles = '';
-  if (d.probWorthless != null) probTiles += mini(sg === 'long_call' || sg === 'long_put' ? 'Exp worthless' : 'Exp worthless', Math.round(d.probWorthless * 100) + '%', sg === 'long_call' || sg === 'long_put' ? '#ef4444' : '#22c55e', 'At expiration');
-  if (d.probAnyProfit != null) probTiles += mini('Exp profit', Math.round(d.probAnyProfit * 100) + '%', '#22c55e', 'At expiration');
+  if (d.probWorthless != null) probTiles += mini('Exp worthless', Math.round(d.probWorthless * 100) + '%', sg === 'long_call' || sg === 'long_put' ? '#ef4444' : '#22c55e', 'At expiration');
+  if (!isSpreadGroup(sg) && d.probAnyProfit != null) probTiles += mini('Exp profit', Math.round(d.probAnyProfit * 100) + '%', '#22c55e', 'At expiration');
   if (d.probTouchShort != null) probTiles += mini('Touch short', Math.round(d.probTouchShort * 100) + '%', '#f59e0b', 'Before expiration');
   if (d.probTouchPutShort != null || d.probTouchCallShort != null) {
     probTiles += mini('Touch shorts', (d.probTouchPutShort != null ? 'P ' + Math.round(d.probTouchPutShort * 100) + '%' : '') + (d.probTouchCallShort != null ? ' C ' + Math.round(d.probTouchCallShort * 100) + '%' : ''), '#f59e0b', 'Before expiration');
@@ -595,7 +606,7 @@ function renderAnalysisResult(d) {
 
   if (sg === 'credit_spread' || sg === 'csp' || sg === 'covered_call') {
     if (d.cushionPct != null)   metrics.push(mc2('CUSHION',      d.cushionPct + '%',              cushC(d.cushionPct)));
-    if (d.breakeven != null)    metrics.push(mc2('BREAKEVEN',    '$' + d.breakeven,               'var(--text)'));
+    if (sg !== 'credit_spread' && d.breakeven != null) metrics.push(mc2('BREAKEVEN', '$' + d.breakeven, 'var(--text)'));
     if (d.crWidthPct != null)   metrics.push(mc2('CR/WIDTH',     d.crWidthPct + '%',              d.crWidthPct >= prefs.creditWidthMin ? '#22c55e' : '#f59e0b'));
     if (d.maxProfit != null || d.maxProfitUnlimited) metrics.push(mc2('MAX PROFIT', fmtRiskMoney(d.maxProfit, d.maxProfitUnlimited), '#22c55e'));
     if (d.maxLoss != null || d.maxLossUnlimited)     metrics.push(mc2('MAX LOSS',   fmtRiskMoney(d.maxLoss, d.maxLossUnlimited),     '#ef4444'));
@@ -620,7 +631,6 @@ function renderAnalysisResult(d) {
     if (d.creditCapturePct != null) metrics.push(mc2('CREDIT CAPTURE', d.creditCapturePct + '%', d.creditCapturePct >= 60 ? '#22c55e' : d.creditCapturePct >= 35 ? '#f59e0b' : '#ef4444'));
   }
   if (sg === 'put_debit_spread' || sg === 'call_debit_spread') {
-    if (d.breakeven != null)    metrics.push(mc2('BREAKEVEN',   '$' + d.breakeven,            'var(--text)'));
     if (d.movePct != null)      metrics.push(mc2('MOVE NEEDED', d.movePct + '%',              d.movePct < 5 ? '#22c55e' : d.movePct < 10 ? '#f59e0b' : '#ef4444'));
     if (d.maxProfit != null || d.maxProfitUnlimited) metrics.push(mc2('MAX PROFIT', fmtRiskMoney(d.maxProfit, d.maxProfitUnlimited), '#22c55e'));
     if (d.maxLoss != null || d.maxLossUnlimited)     metrics.push(mc2('MAX LOSS',   fmtRiskMoney(d.maxLoss, d.maxLossUnlimited),     '#ef4444'));
