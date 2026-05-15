@@ -115,7 +115,7 @@ async function getUserSettings() {
     .from('user_settings')
     .select('settings')
     .eq('user_id', user.id)
-    .single();
+    .maybeSingle();
   if (error && error.code !== 'PGRST116') throw error;  // PGRST116 = no rows
   return data?.settings ? { ...DEFAULT_PREFS, ...data.settings } : { ...DEFAULT_PREFS };
 }
@@ -157,8 +157,9 @@ async function getTradeById(id) {
     .select('*')
     .eq('id', id)
     .eq('user_id', user.id)
-    .single();
+    .maybeSingle();
   if (error) throw error;
+  if (!data) throw new Error('Trade not found');
   return data;
 }
 
@@ -324,7 +325,7 @@ async function getBaseline() {
     .from('historical_baseline')
     .select('*')
     .eq('user_id', user.id)
-    .single();
+    .maybeSingle();
   if (error && error.code !== 'PGRST116') throw error;
   return data || { ...DEFAULT_HIST };
 }
@@ -356,7 +357,7 @@ async function getJournalNote(date) {
     .select('*')
     .eq('user_id', user.id)
     .eq('note_date', date)
-    .single();
+    .maybeSingle();
   if (error && error.code !== 'PGRST116') throw error;
   return data || null;
 }
