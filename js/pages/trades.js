@@ -115,12 +115,12 @@ function renderTrades() {
         'style="display:flex;justify-content:space-between;align-items:center;gap:10px;padding:' + (expanded ? '0 0 10px' : '12px 13px') + ';cursor:pointer;margin-bottom:' + (expanded ? '9px' : '0') + '">' +
         '<div style="min-width:0;flex:1">' +
           '<div style="display:flex;align-items:center;gap:7px;margin-bottom:2px;min-width:0;flex-wrap:wrap">' +
-            '<span style="font-family:var(--mono);font-size:16px;font-weight:700">' + t.ticker + '</span>' +
+            '<span style="font-family:var(--mono);font-size:16px;font-weight:700">' + esc(t.ticker) + '</span>' +
             '<span style="font-size:9px;color:var(--text3);font-family:var(--mono)">' + (dte !== undefined ? dte + 'DTE' : '') + '</span>' +
             '<span class="badge" style="background:' + assess.color + '15;border:1px solid ' + assess.color + '25;color:' + assess.color + ';font-size:9px">' + assess.label + '</span>' +
             (sector ? '<span style="font-size:9px;color:var(--text3)">' + sector + '</span>' : '') +
           '</div>' +
-          '<div style="font-size:10px;color:var(--text3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + t.strategy + (t.expDate ? ' · Exp ' + t.expDate : '') + '</div>' +
+          '<div style="font-size:10px;color:var(--text3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + esc(t.strategy) + (t.expDate ? ' &middot; Exp ' + esc(t.expDate) : '') + '</div>' +
         '</div>' +
         '<div style="text-align:right;display:flex;align-items:center;gap:10px;flex-shrink:0">' +
           '<div>' +
@@ -147,12 +147,12 @@ function renderTrades() {
       (tags.length > 0
         ? '<div style="margin-bottom:8px">' +
             tags.map(function(tg) {
-              return '<span style="display:inline-flex;padding:2px 7px;border-radius:5px;font-size:9px;background:var(--blue-dim);border:1px solid rgba(99,102,241,.2);color:var(--blue2);font-family:var(--mono);margin:0 3px 3px 0">' + tg + '</span>';
+              return '<span style="display:inline-flex;padding:2px 7px;border-radius:5px;font-size:9px;background:var(--blue-dim);border:1px solid rgba(99,102,241,.2);color:var(--blue2);font-family:var(--mono);margin:0 3px 3px 0">' + esc(tg) + '</span>';
             }).join('') +
           '</div>'
         : '') +
       (t.notes
-        ? '<div style="font-size:11px;color:var(--text2);margin-bottom:8px;padding:7px 10px;background:var(--surface2);border-radius:7px;border:1px solid var(--border)">' + t.notes + '</div>'
+        ? '<div style="font-size:11px;color:var(--text2);margin-bottom:8px;padding:7px 10px;background:var(--surface2);border-radius:7px;border:1px solid var(--border)">' + esc(t.notes) + '</div>'
         : '') +
       (t.exitSignal
         ? '<div style="padding:7px 10px;background:var(--red-dim);border-radius:7px;font-size:11px;color:var(--red);margin-bottom:8px;border:1px solid rgba(239,68,68,.2)">&#9889; Exit if ' + t.ticker + ' breaks $' + t.exitSignal + '</div>'
@@ -247,9 +247,9 @@ function closedRow(t) {
   var crCol      = isAssigned ? 'var(--yellow)' : pnl > 0 ? 'var(--green)' : 'var(--red)';
   return '<div style="display:flex;align-items:center;gap:9px;padding:9px 12px;background:var(--surface);border:1px solid var(--border);border-radius:9px;margin:0 12px 6px;opacity:.8">' +
     '<div style="flex:1">' +
-      '<span style="font-family:var(--mono);font-weight:600;color:var(--text2);margin-right:7px">' + t.ticker + '</span>' +
-      '<span style="font-size:10px;color:var(--text3)">' + t.strategy + '</span>' +
-      (t.expDate ? '<div style="font-size:10px;color:var(--text3);margin-top:1px">' + t.expDate + '</div>' : '') +
+      '<span style="font-family:var(--mono);font-weight:600;color:var(--text2);margin-right:7px">' + esc(t.ticker) + '</span>' +
+      '<span style="font-size:10px;color:var(--text3)">' + esc(t.strategy) + '</span>' +
+      (t.expDate ? '<div style="font-size:10px;color:var(--text3);margin-top:1px">' + esc(t.expDate) + '</div>' : '') +
     '</div>' +
     '<div style="display:flex;gap:7px;align-items:center">' +
       '<span style="font-family:var(--mono);font-size:13px;font-weight:700;color:' + crCol + '">' + (pnl > 0 ? '+' : '') + pnl + '%</span>' +

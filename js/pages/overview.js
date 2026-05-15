@@ -97,7 +97,7 @@ function renderOverview() {
       (prefs.marketNote
         ? '<div class="card" style="border-color:rgba(245,158,11,.3)">' +
             '<div style="font-size:10px;color:var(--yellow);font-weight:600;margin-bottom:5px">MARKET NOTE</div>' +
-            '<div style="font-size:12px;color:var(--text2);line-height:1.6">' + prefs.marketNote + '</div>' +
+            '<div style="font-size:12px;color:var(--text2);line-height:1.6">' + esc(prefs.marketNote) + '</div>' +
           '</div>'
         : '') +
 

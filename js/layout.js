@@ -3,7 +3,7 @@
 // Keeps index.html structural while coordinating page modules.
 // =============================================================================
 
-const PAGES = ['overview','analyze','trades','calendar','sectors','stats','prefs'];
+const PAGES = ['overview','analyze','trades','calendar','sectors','stats','prefs','admin'];
 let curPage = 'overview';
 
 function isDesktopLayout() {
@@ -23,6 +23,7 @@ function applyLayout() {
 }
 
 function showPage(name) {
+  if (isAdminUser()) recordAdminEvent('page_view', { page: name });
   curPage = name;
   PAGES.forEach(function(p) {
     var el = $('page-' + p);
@@ -38,6 +39,7 @@ function showPage(name) {
   if (name === 'sectors') renderSectors();
   if (name === 'stats') renderStats();
   if (name === 'prefs') renderPrefs();
+  if (name === 'admin') renderAdmin();
 }
 
 async function initApp() {
@@ -45,6 +47,7 @@ async function initApp() {
   try { hist = normalizeHist(JSON.parse(localStorage.getItem(HK) || JSON.stringify(DEFAULT_HIST))); } catch(e) { hist = {...DEFAULT_HIST}; }
   try { prefs = JSON.parse(localStorage.getItem(CK.prefs) || JSON.stringify(DEFAULT_PREFS)); } catch(e) { prefs = {...DEFAULT_PREFS}; }
   if (!localStorage.getItem(HK)) saveHist();
+  installAdminNav();
 
   if (_sbClient && currentUser) {
     try {

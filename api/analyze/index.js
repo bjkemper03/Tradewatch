@@ -5,6 +5,7 @@
 // =============================================================================
 
 import { fetchAllData } from './dataFetch.js';
+import { applyApiHeaders, cleanTicker, handleOptions } from '../_security.js';
 import {
   analyzeCreditSpread,
   analyzeIronCondor,
@@ -88,11 +89,8 @@ function isCreditStrategy(strategy) {
 // Handler
 // ---------------------------------------------------------------------------
 export default async function handler(req, res) {
-  res.setHeader('Access-Control-Allow-Origin',  '*');
-  res.setHeader('Access-Control-Allow-Methods', 'POST,OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
-
-  if (req.method === 'OPTIONS') return res.status(200).end();
+  if (handleOptions(req, res, ['POST'])) return;
+  applyApiHeaders(req, res, ['POST','OPTIONS']);
   if (req.method !== 'POST')   return res.status(405).json({ error: 'Method not allowed' });
 
   // ── Input validation ────────────────────────────────────────────────────
@@ -108,7 +106,10 @@ export default async function handler(req, res) {
     return res.status(400).json({ ok: false, error: 'Missing legs' });
   }
 
-  const tickerUpper = ticker.toUpperCase().trim();
+  const tickerUpper = cleanTicker(ticker);
+  if (!tickerUpper) {
+    return res.status(400).json({ ok: false, error: 'Enter a valid ticker symbol' });
+  }
   const group = STRATEGY_GROUPS[strategy];
 
   if (!group) {
