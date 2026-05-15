@@ -15,11 +15,17 @@ function safeNum(v, fb) {
 
 function parseExp(str) {
   if (!str) return null;
-  var s = str.trim().replace(/-/g, '/');
-  var p = s.split('/');
-  if (p.length !== 3) return null;
-  var m = p[0], d = p[1], y = p[2];
-  if (y.length === 2) y = '20' + y;
+  var raw = str.trim();
+  var m, d, y;
+  var iso = raw.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
+  if (iso) {
+    y = iso[1]; m = iso[2]; d = iso[3];
+  } else {
+    var p = raw.replace(/-/g, '/').split('/');
+    if (p.length !== 3) return null;
+    m = p[0]; d = p[1]; y = p[2];
+    if (y.length === 2) y = '20' + y;
+  }
   if (m.length < 2) m = m.padStart(2, '0');
   if (d.length < 2) d = d.padStart(2, '0');
   var dt = new Date(y + '-' + m + '-' + d + 'T16:00:00');
@@ -62,57 +68,45 @@ function bsDelta(S, K, T, sig, type) {
 }
 
 // ---------------------------------------------------------------------------
-// BWB / Butterfly max loss calculation
-// ---------------------------------------------------------------------------
-function calcBWBMaxLoss(legs, cr) {
-  var buys  = legs.filter(function(l) { return l.a === 'BUY'; })
-                  .map(function(l) { return safeNum(l.s); })
-                  .filter(function(s) { return s > 0; })
-                  .sort(function(a, b) { return b - a; });
-  var sells = legs.filter(function(l) { return l.a === 'SELL'; })
-                  .map(function(l) { return safeNum(l.s); })
-                  .filter(function(s) { return s > 0; });
-
-  if (buys.length < 2 || sells.length < 1) return null;
-
-  var topLong    = buys[0];
-  var bottomLong = buys[buys.length - 1];
-  var short      = sells[0];
-
-  if (!(topLong > short && short > bottomLong)) return null;
-
-  var sellLeg   = legs.find(function(l) { return l.a === 'SELL'; });
-  var contracts = sellLeg ? (sellLeg.n || 1) : 1;
-  var credit    = safeNum(cr);
-  var upper     = topLong - short;
-  var lower     = short - bottomLong;
-
-  if (upper <= 0 || lower <= 0) return null;
-
-  var rawLoss = (lower - upper) * 100 * contracts - (credit * 100 * contracts);
-  return {
-    maxLoss:    Math.max(0, rawLoss),
-    upper:      upper,
-    lower:      lower,
-    topLong:    topLong,
-    short:      short,
-    bottomLong: bottomLong,
-    contracts:  contracts,
-  };
-}
-
-function calcBWBBreakeven(legs, cr) {
-  var sellLeg = legs.find(function(l) { return l.a === 'SELL'; });
-  if (!sellLeg) return null;
-  var s = safeNum(sellLeg.s);
-  var c = safeNum(cr);
-  return (s && c) ? parseFloat((s - c).toFixed(2)) : null;
-}
-
-// ---------------------------------------------------------------------------
 // Collateral calculation -- strategy-aware
 // ---------------------------------------------------------------------------
-function calcCollateral(strat, legs, cr) {
+function payoffAtExpiry(legs, px, netPremium, includeShares, shareBasis) {
+  var pnl = safeNum(netPremium) * 100;
+  if (includeShares) pnl += (px - safeNum(shareBasis)) * 100;
+  legs.forEach(function(leg) {
+    var strike = safeNum(leg.s);
+    if (!strike) return;
+    var qty = Math.max(1, safeNum(leg.n || 1, 1));
+    var intrinsic = leg.t === 'CALL' ? Math.max(0, px - strike) : Math.max(0, strike - px);
+    pnl += (leg.a === 'BUY' ? 1 : -1) * intrinsic * qty * 100;
+  });
+  return pnl;
+}
+
+function estimatePayoffRisk(strat, legs, cr, entryType) {
+  var valid = legs.filter(function(l) { return safeNum(l.s) > 0; });
+  if (!valid.length || valid.length !== legs.length) return null;
+  var netPremium = entryType === 'debit' ? -safeNum(cr) : safeNum(cr);
+  var includeShares = strat === 'COVERED CALL';
+  var shareBasis = 0;
+  var strikes = valid.map(function(l) { return safeNum(l.s); }).concat([0]);
+  var highSlope = includeShares ? 100 : 0;
+  valid.forEach(function(l) {
+    if (l.t === 'CALL') highSlope += (l.a === 'BUY' ? 1 : -1) * Math.max(1, safeNum(l.n || 1, 1)) * 100;
+  });
+  var points = strikes.map(function(px) {
+    return payoffAtExpiry(valid, px, netPremium, includeShares, shareBasis);
+  });
+  if (highSlope < 0) return { maxLoss: null, unlimited: true };
+  var minPnl = Math.min.apply(null, points);
+  return { maxLoss: Math.max(0, -minPnl), unlimited: false };
+}
+
+function calcCollateral(strat, legs, cr, entryType) {
+  if (!entryType) entryType = isDebitStrat(strat) ? 'debit' : 'credit';
+  var engineRisk = estimatePayoffRisk(strat, legs, cr, entryType);
+  if (engineRisk && !engineRisk.unlimited) return engineRisk.maxLoss;
+
   var sells  = legs.filter(function(l) { return l.a === 'SELL'; });
   var buys   = legs.filter(function(l) { return l.a === 'BUY'; });
   var allLegs = sells.concat(buys);
@@ -131,8 +125,7 @@ function calcCollateral(strat, legs, cr) {
     return 0; // collateral is shares already owned
   }
   if (['PUT BUTTERFLY','CALL BUTTERFLY','PUT RATIO SPREAD','CALL RATIO SPREAD'].includes(strat)) {
-    var b = calcBWBMaxLoss(legs, cr);
-    return (b && b.maxLoss > 0) ? b.maxLoss : 0;
+    return 0; // Unlimited or incomplete estimate; backend gives final risk after analysis.
   }
   if (strat === 'IRON CONDOR' || strat === 'IRON BUTTERFLY') {
     var puts      = legs.filter(function(l) { return l.t === 'PUT'; });

@@ -16,6 +16,7 @@ import {
   calcYield,
   calcWheelScenarios,
 } from './probability.js';
+import { analyzePayoff } from './payoffEngine.js';
 
 // ---------------------------------------------------------------------------
 // HELPERS
@@ -44,6 +45,37 @@ function bsDelta(S, K, T, vol, type) {
   const d1 = (Math.log(S / K) + 0.5 * vol * vol * T) / (vol * Math.sqrt(T));
   return type === 'call' ? ncdf(d1) : ncdf(d1) - 1;
 }
+function npdf(x) {
+  return Math.exp(-0.5 * x * x) / Math.sqrt(2 * Math.PI);
+}
+function bsGreekSet(S, K, T, vol, type) {
+  if (!S || !K || !T || !vol || T <= 0 || vol <= 0) return null;
+  const sqrtT = Math.sqrt(T);
+  const d1 = (Math.log(S / K) + 0.5 * vol * vol * T) / (vol * sqrtT);
+  const d2 = d1 - vol * sqrtT;
+  const isCall = type === 'call';
+  const delta = isCall ? ncdf(d1) : ncdf(d1) - 1;
+  const gamma = npdf(d1) / (S * vol * sqrtT);
+  const theta = (-(S * npdf(d1) * vol) / (2 * sqrtT)) / 365;
+  const vega = S * npdf(d1) * sqrtT / 100;
+  const rho = (isCall ? K * T * ncdf(d2) : -K * T * ncdf(-d2)) / 100;
+  return {
+    delta: parseFloat(delta.toFixed(4)),
+    gamma: parseFloat(gamma.toFixed(4)),
+    theta: parseFloat(theta.toFixed(4)),
+    vega: parseFloat(vega.toFixed(4)),
+    rho: parseFloat(rho.toFixed(4)),
+  };
+}
+
+function completeGreeks(greeks, S, K, T, vol, type) {
+  const fallback = bsGreekSet(S, K, T, vol, type);
+  if (!fallback && !greeks) return null;
+  return {
+    ...(fallback || {}),
+    ...(greeks || {}),
+  };
+}
 
 // Get best available volatility -- IV from chain preferred, HV30 fallback
 function getBestVol(greeks, hv30) {
@@ -55,15 +87,22 @@ function getBestVol(greeks, hv30) {
 function checkEarningsRisk(earnings, expDateObj) {
   if (!earnings || !expDateObj) return { risk: false, date: null };
   const ed = new Date(earnings.date + 'T12:00:00');
-  return { risk: ed <= expDateObj, date: earnings.date };
+  if (isNaN(ed.getTime())) return { risk: false, date: earnings.date || null };
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  return { risk: ed >= today && ed <= expDateObj, date: earnings.date };
 }
 
 // Signal from prefs thresholds
 function getSignal(issues) {
-  const critical = issues.filter(i => i.level === 'critical');
-  const warnings = issues.filter(i => i.level === 'warning');
-  if (critical.length > 0) return 'NO-GO';
-  if (warnings.length > 1) return 'CAUTION';
+  const score = issues.reduce((sum, issue) => {
+    if (issue.level === 'critical') return sum + (issue.weight || 5);
+    if (issue.level === 'warning') return sum + (issue.weight || 2);
+    return sum + (issue.weight || 1);
+  }, 0);
+  if (issues.some(i => i.level === 'critical' && (i.weight || 5) >= 5)) return 'NO-GO';
+  if (score >= 5) return 'NO-GO';
+  if (score >= 2) return 'CAUTION';
   return 'GO';
 }
 
@@ -80,6 +119,105 @@ function modelNotes(data, opts = {}) {
   notes.push({ level:'estimate', msg:'Probabilities assume a lognormal price path from current volatility. Expiration odds and touch odds answer different questions.' });
   if (opts.structureNote) notes.push({ level:'weak', msg: opts.structureNote });
   return notes;
+}
+
+function payoffSummary(legs, netPremiumPerShare, price, labels = [], opts = {}) {
+  const qtys = (legs || []).map(l => Math.max(1, safeNum(l.n || l.qty || 1, 1)));
+  const sameQty = qtys.length > 0 && qtys.every(q => Math.abs(q - qtys[0]) < 0.0001);
+  return analyzePayoff({
+    legs,
+    netPremiumPerShare,
+    premiumContracts: opts.premiumContracts || (sameQty ? qtys[0] : 1),
+    underlyingShares: opts.underlyingShares || 0,
+    underlyingBasis: opts.underlyingBasis || 0,
+  }, {
+    currentPrice: price,
+    labels,
+    extraPrices: opts.extraPrices || [],
+  });
+}
+
+function firstBreakeven(payoff, fallback = null) {
+  return payoff?.breakevens?.length ? payoff.breakevens[0] : fallback;
+}
+
+function collateralFromPayoff(payoff, fallback = 0) {
+  if (!payoff) return fallback;
+  if (payoff.maxLossUnlimited) return null;
+  return payoff.collateral ?? payoff.maxLoss ?? fallback;
+}
+
+function riskFieldsFromPayoff(payoff) {
+  return {
+    maxProfit: payoff.maxProfit,
+    maxLoss: payoff.maxLoss,
+    collateral: collateralFromPayoff(payoff),
+    maxProfitUnlimited: payoff.maxProfitUnlimited,
+    maxLossUnlimited: payoff.maxLossUnlimited,
+  };
+}
+
+function sameOptionType(legs) {
+  const types = [...new Set((legs || []).map(l => String(l.t || '').toUpperCase()).filter(Boolean))];
+  return types.length <= 1 ? types[0] || null : null;
+}
+
+function groupedByStrike(legs) {
+  const map = new Map();
+  for (const leg of legs) {
+    const strike = safeNum(leg.s);
+    if (!strike) continue;
+    const item = map.get(strike) || { strike, buyQty: 0, sellQty: 0, netQty: 0 };
+    const qty = Math.max(1, safeNum(leg.n || 1, 1));
+    if (leg.a === 'BUY') item.buyQty += qty;
+    if (leg.a === 'SELL') item.sellQty += qty;
+    item.netQty = item.buyQty - item.sellQty;
+    map.set(strike, item);
+  }
+  return [...map.values()].sort((a, b) => a.strike - b.strike);
+}
+
+function simpleRatio(a, b) {
+  if (!a || !b) return null;
+  const x = Math.round(Math.abs(a) * 100);
+  const y = Math.round(Math.abs(b) * 100);
+  function gcd(m, n) { return n ? gcd(n, m % n) : m; }
+  const g = gcd(x, y) || 1;
+  return `${x / g}:${y / g}`;
+}
+
+function aggregateLegGreeks(chain, legs, fallbackVol, price, dte, optTypeFallback) {
+  const totals = { delta: 0, gamma: 0, theta: 0, vega: 0, rho: 0 };
+  let found = false;
+  let source = 'BS';
+
+  for (const leg of legs) {
+    const type = String(leg.t || optTypeFallback || 'PUT').toLowerCase();
+    const strike = safeNum(leg.s);
+    const qty = Math.max(1, safeNum(leg.n || 1, 1));
+    const side = leg.a === 'BUY' ? 1 : -1;
+    const g = extractGreeks(findChainContract(chain, strike, type));
+    if (g) {
+      ['delta', 'gamma', 'theta', 'vega', 'rho'].forEach(k => {
+        if (g[k] != null) {
+          totals[k] += side * qty * safeNum(g[k]);
+          found = true;
+          source = 'Tradier';
+        }
+      });
+    } else if (strike && price && dte && fallbackVol && !found) {
+      const bd = bsDelta(price, strike, dte / 365, fallbackVol, type);
+      if (bd !== null) {
+        totals.delta += side * qty * bd;
+        found = true;
+      }
+    }
+  }
+
+  if (!found) return null;
+  Object.keys(totals).forEach(k => { totals[k] = parseFloat(totals[k].toFixed(4)); });
+  totals.source = source;
+  return totals;
 }
 
 // ---------------------------------------------------------------------------
@@ -99,6 +237,9 @@ export function analyzeCreditSpread(data, legs, expDateObj, dte, credit, prefs) 
   const optType     = (sellLeg.t || 'PUT').toLowerCase();
   const isPut       = optType === 'put';
 
+  if (String(buyLeg.t || '').toUpperCase() !== String(sellLeg.t || '').toUpperCase()) {
+    return { error: 'Credit spread legs must use the same option type' };
+  }
   if (!shortStrike || !longStrike) return { error: 'Enter strike prices for both legs' };
 
   const spreadWidth = Math.abs(shortStrike - longStrike);
@@ -120,11 +261,15 @@ export function analyzeCreditSpread(data, legs, expDateObj, dte, credit, prefs) 
   }
 
   // Core metrics
-  const maxProfit  = cr * 100; // per contract
-  const maxLoss    = (spreadWidth - cr) * 100;
-  const breakeven  = isPut
+  const payoff = payoffSummary(legs, cr, price, [
+    { label: 'Short strike', px: shortStrike, note: 'Max profit starts beyond here', kind: 'short' },
+    { label: 'Long strike', px: longStrike, note: 'Max loss starts beyond here', kind: 'loss' },
+  ]);
+  const maxProfit = payoff.maxProfit;
+  const maxLoss = payoff.maxLoss;
+  const breakeven = firstBreakeven(payoff, isPut
     ? parseFloat((shortStrike - cr).toFixed(2))
-    : parseFloat((shortStrike + cr).toFixed(2));
+    : parseFloat((shortStrike + cr).toFixed(2)));
 
   // Cushion = distance from current price to short strike
   const cushionPct = isPut
@@ -170,14 +315,15 @@ export function analyzeCreditSpread(data, legs, expDateObj, dte, credit, prefs) 
   const crwMin  = prefs?.creditWidthMin || 8;
   const deltaMax = prefs?.deltaHigh || 0.30;
 
-  if (earningsCheck.risk)                             issues.push({ level:'critical', msg:`Earnings ${earningsCheck.date} falls within expiration` });
-  if (cushionPct < cushMin)                           issues.push({ level:'critical', msg:`${cushionPct}% cushion below your ${cushMin}% minimum` });
-  if (absDelta && absDelta > deltaMax)                issues.push({ level:'warning',  msg:`Delta ${absDelta.toFixed(3)} above your ${deltaMax} target` });
-  if (crWidthPct < crwMin)                            issues.push({ level:'warning',  msg:`Credit is only ${crWidthPct}% of spread width -- low return on risk` });
+  if (payoff.maxLossUnlimited)                        issues.push({ level:'critical', weight:6, msg:'Undefined/naked risk detected -- not beginner-safe' });
+  if (earningsCheck.risk)                             issues.push({ level:'critical', weight:5, msg:`Earnings ${earningsCheck.date} falls within expiration` });
+  if (cushionPct < cushMin)                           issues.push({ level:'critical', weight:5, msg:`${cushionPct}% cushion below your ${cushMin}% minimum` });
+  if (absDelta && absDelta > deltaMax)                issues.push({ level:'warning', weight:3, msg:`Delta ${absDelta.toFixed(3)} above your ${deltaMax} target` });
+  if (crWidthPct < crwMin)                            issues.push({ level:'warning', weight:2, msg:`Credit is only ${crWidthPct}% of spread width -- low return on risk` });
   if (dte < dteMin)                                   issues.push({ level:'warning',  msg:`${dte} DTE below your ${dteMin} minimum` });
   if (dte > dteMax)                                   issues.push({ level:'warning',  msg:`${dte} DTE above your ${dteMax} maximum` });
-  if (isPut && nearestSupport && shortStrike < nearestSupport) issues.push({ level:'warning', msg:`Short strike $${shortStrike} below support $${nearestSupport}` });
-  if (!strikeOutsideEM && em)                         issues.push({ level:'warning',  msg:`Short strike inside 1SD expected move ($${em})` });
+  if (isPut && nearestSupport && shortStrike > nearestSupport) issues.push({ level:'note', weight:0, msg:`Context: short put $${shortStrike} sits above nearest support $${nearestSupport}` });
+  if (!strikeOutsideEM && em)                         issues.push({ level:'warning', weight:3, msg:`Short strike inside 1SD expected move ($${em})` });
 
   return {
     strategyGroup: 'credit_spread',
@@ -214,6 +360,7 @@ export function analyzeCreditSpread(data, legs, expDateObj, dte, credit, prefs) 
     earningsRisk: earningsCheck.risk,
     earningsDate: earningsCheck.date,
     modelNotes: modelNotes(data, { greeks }),
+    payoff,
   };
 }
 
@@ -234,6 +381,9 @@ export function analyzeIronCondor(data, legs, expDateObj, dte, credit, prefs) {
 
   if (!sellPut || !buyPut || !sellCall || !buyCall) {
     return { error: 'Iron condor requires 4 legs: sell put, buy put, sell call, buy call' };
+  }
+  if (puts.length !== 2 || calls.length !== 2) {
+    return { error: 'Iron condor expects exactly two put legs and two call legs' };
   }
 
   const shortPut  = safeNum(sellPut.s);
@@ -262,10 +412,16 @@ export function analyzeIronCondor(data, legs, expDateObj, dte, credit, prefs) {
   const callDelta = callGreeks?.delta != null ? Math.abs(callGreeks.delta) : Math.abs(bsDelta(price, shortCall, dte/365, vol, 'call') || 0);
 
   // Core metrics
-  const maxProfit = cr * 100;
-  const maxLoss   = (maxWidth - cr) * 100;
-  const putBreakeven  = parseFloat((shortPut  - cr).toFixed(2));
-  const callBreakeven = parseFloat((shortCall + cr).toFixed(2));
+  const payoff = payoffSummary(legs, cr, price, [
+    { label: 'Put short', px: shortPut, note: 'Max-profit zone starts above here', kind: 'short' },
+    { label: 'Call short', px: shortCall, note: 'Max-profit zone ends below here', kind: 'short' },
+    { label: 'Put max loss', px: longPut, note: 'Lower wing fully breached', kind: 'loss' },
+    { label: 'Call max loss', px: longCall, note: 'Upper wing fully breached', kind: 'loss' },
+  ]);
+  const maxProfit = payoff.maxProfit;
+  const maxLoss   = payoff.maxLoss;
+  const putBreakeven  = payoff.breakevens[0] ?? parseFloat((shortPut  - cr).toFixed(2));
+  const callBreakeven = payoff.breakevens[1] ?? parseFloat((shortCall + cr).toFixed(2));
   const tentWidth     = parseFloat((callBreakeven - putBreakeven).toFixed(2));
 
   // Distance from price to each short strike
@@ -286,12 +442,13 @@ export function analyzeIronCondor(data, legs, expDateObj, dte, credit, prefs) {
   const cushMin  = prefs?.cushionMin || 5;
   const deltaMax = prefs?.deltaHigh  || 0.30;
 
-  if (earningsCheck.risk)                  issues.push({ level:'critical', msg:`Earnings ${earningsCheck.date} within expiration` });
-  if (minCushionPct < cushMin)             issues.push({ level:'critical', msg:`Tight cushion: put side ${putCushionPct}%, call side ${callCushionPct}%` });
-  if (putDelta > deltaMax)                 issues.push({ level:'warning',  msg:`Put delta ${putDelta.toFixed(3)} above ${deltaMax} target` });
-  if (callDelta > deltaMax)                issues.push({ level:'warning',  msg:`Call delta ${callDelta.toFixed(3)} above ${deltaMax} target` });
+  if (payoff.maxLossUnlimited)             issues.push({ level:'critical', weight:6, msg:'Undefined/naked risk detected -- not beginner-safe' });
+  if (earningsCheck.risk)                  issues.push({ level:'critical', weight:5, msg:`Earnings ${earningsCheck.date} within expiration` });
+  if (minCushionPct < cushMin)             issues.push({ level:'critical', weight:5, msg:`Tight cushion: put side ${putCushionPct}%, call side ${callCushionPct}%` });
+  if (putDelta > deltaMax)                 issues.push({ level:'warning', weight:3, msg:`Put delta ${putDelta.toFixed(3)} above ${deltaMax} target` });
+  if (callDelta > deltaMax)                issues.push({ level:'warning', weight:3, msg:`Call delta ${callDelta.toFixed(3)} above ${deltaMax} target` });
   if (isIronButterfly)                     issues.push({ level:'warning',  msg:'Iron butterfly -- max profit only if price pins at strike. Very tight target.' });
-  if (price < shortPut || price > shortCall) issues.push({ level:'critical', msg:'Price already outside the tent -- do not open' });
+  if (price < shortPut || price > shortCall) issues.push({ level:'critical', weight:6, msg:'Price already outside the tent -- do not open' });
 
   return {
     strategyGroup: isIronButterfly ? 'iron_butterfly' : 'iron_condor',
@@ -326,6 +483,7 @@ export function analyzeIronCondor(data, legs, expDateObj, dte, credit, prefs) {
         ? 'Iron butterfly max profit is a pin-at-strike estimate, not a broad profit zone.'
         : null,
     }),
+    payoff,
   };
 }
 
@@ -343,25 +501,40 @@ export function analyzeCSP(data, legs, expDateObj, dte, credit, prefs) {
   if (!strike) return { error: 'Enter the put strike price' };
 
   const contract = findChainContract(chain, strike, 'put');
-  const greeks   = extractGreeks(contract);
-  const vol      = getBestVol(greeks, hv30);
+  const rawGreeks = extractGreeks(contract);
+  const vol      = getBestVol(rawGreeks, hv30);
+  const greeks   = completeGreeks(rawGreeks, price, strike, dte / 365, vol, 'put');
 
   let absDelta = null, deltaSource = 'BS';
   if (greeks?.delta != null) {
     absDelta = Math.abs(greeks.delta);
-    deltaSource = 'Tradier';
+    deltaSource = rawGreeks?.delta != null ? 'Tradier' : 'BS';
   } else if (dte) {
     const bd = bsDelta(price, strike, dte / 365, vol, 'put');
     if (bd !== null) { absDelta = Math.abs(bd); }
   }
 
+  const payoff       = payoffSummary(legs, cr, price, [
+    { label: 'Put strike', px: strike, note: 'Short put expires worthless above here', kind: 'short' },
+    { label: 'Stock $0', px: 0, note: 'Theoretical worst case', kind: 'loss' },
+  ]);
+  const cspNowPnl = parseFloat(((cr - Math.max(0, strike - price)) * 100).toFixed(2));
+  const cspBreakeven = firstBreakeven(payoff, parseFloat((strike - cr).toFixed(2)));
+  payoff.checkpoints = [
+    { label: 'Now', px: price, pnl: cspNowPnl, note: '', kind: 'now' },
+    { label: 'Breakeven', px: cspBreakeven, pnl: 0, note: 'P/L is about $0', kind: 'be' },
+    { label: `Max profit $${strike}+`, px: strike, pnl: payoff.maxProfit, note: 'Put expires worthless at or above strike', kind: 'profit' },
+    { label: 'Max loss $0', px: 0, pnl: payoff.maxLoss != null ? -payoff.maxLoss : null, note: 'Theoretical if stock goes to $0', kind: 'loss' },
+  ];
   const collateral   = strike * 100;
-  const maxProfit    = cr * 100;
-  const maxLoss      = (strike - cr) * 100; // assigned at strike, stock goes to 0
-  const breakeven    = parseFloat((strike - cr).toFixed(2));
+  const maxProfit    = payoff.maxProfit;
+  const maxLoss      = payoff.maxLoss;
+  const breakeven    = firstBreakeven(payoff, parseFloat((strike - cr).toFixed(2)));
   const cushionPct   = parseFloat(((price - strike) / price * 100).toFixed(1));
   const beCushionPct = parseFloat(((price - breakeven) / price * 100).toFixed(1));
   const em           = calcExpectedMove(price, vol, dte);
+  const dailyDecay   = greeks?.theta != null ? parseFloat((-greeks.theta).toFixed(4)) : null;
+  const dailyThetaDollars = dailyDecay != null ? parseFloat((dailyDecay * 100).toFixed(2)) : null;
 
   // Wheel scenarios
   const wheelData = calcWheelScenarios(price, strike, cr, dte, 'put');
@@ -402,6 +575,8 @@ export function analyzeCSP(data, legs, expDateObj, dte, credit, prefs) {
     iv: greeks?.iv || null,
     vol: pct(vol),
     em,
+    dailyDecay,
+    dailyThetaDollars,
 
     // Wheel context
     wheelScenarios: wheelData,
@@ -424,6 +599,7 @@ export function analyzeCSP(data, legs, expDateObj, dte, credit, prefs) {
     // Framing note -- assignment is not a loss in wheel strategy
     wheelNote: 'Assignment means you buy shares at your effective cost basis of $' + breakeven.toFixed(2) + '. This is the goal in wheel strategy.',
     modelNotes: modelNotes(data, { greeks }),
+    payoff,
   };
 }
 
@@ -453,9 +629,14 @@ export function analyzeCoveredCall(data, legs, expDateObj, dte, credit, prefs) {
     if (bd !== null) { absDelta = Math.abs(bd); }
   }
 
-  const maxProfit     = (strike - price + cr) * 100; // called away at strike + premium
+  const payoff        = payoffSummary(legs, cr, price, [
+    { label: 'Call strike', px: strike, note: 'Called away above here', kind: 'short' },
+    { label: 'Stock $0', px: 0, note: 'Theoretical downside endpoint', kind: 'loss' },
+  ], { underlyingShares: 100, underlyingBasis: price });
+  const maxProfit     = payoff.maxProfit;
+  const maxLoss       = payoff.maxLoss;
   const downsideProtection = cr; // premium reduces cost basis
-  const breakeven     = parseFloat((price - cr).toFixed(2)); // new effective downside BE
+  const breakeven     = firstBreakeven(payoff, parseFloat((price - cr).toFixed(2))); // current-price basis
   const upsideCap     = strike;
   const upsideCapPct  = parseFloat(((strike - price) / price * 100).toFixed(1));
   const em            = calcExpectedMove(price, vol, dte);
@@ -463,10 +644,9 @@ export function analyzeCoveredCall(data, legs, expDateObj, dte, credit, prefs) {
   // Wheel scenarios
   const wheelData = calcWheelScenarios(price, strike, cr, dte, 'call');
 
-  // Probability of being called away
-  const probCalledAway = calcPOW(price, strike, vol, dte, 'put'); // P(price < strike) for CC = P(not called)
-  const probNotCalled  = probCalledAway;
-  const probCalled     = probCalledAway != null ? parseFloat((1 - probCalledAway).toFixed(4)) : null;
+  // Probability of being called away: below strike means not called, above strike means called.
+  const probNotCalled  = calcPOW(price, strike, vol, dte, 'put');
+  const probCalled     = probNotCalled != null ? parseFloat((1 - probNotCalled).toFixed(4)) : null;
 
   const earningsCheck = checkEarningsRisk(earnings, expDateObj);
 
@@ -487,6 +667,7 @@ export function analyzeCoveredCall(data, legs, expDateObj, dte, credit, prefs) {
     upsideCap, upsideCapPct,
     downsideProtection,
     maxProfit,
+    collateral: 0,
     absDelta, deltaSource,
     greeks: greeks || null,
     iv: greeks?.iv || null,
@@ -505,6 +686,8 @@ export function analyzeCoveredCall(data, legs, expDateObj, dte, credit, prefs) {
       greeks,
       structureNote: 'Covered-call return uses current stock price as share basis. Add actual share cost basis before treating wheel return as exact.',
     }),
+    maxLoss,
+    payoff,
   };
 }
 
@@ -521,7 +704,7 @@ export function analyzeButterflyBWB(data, legs, expDateObj, dte, credit, prefs, 
   if (allLegs.length < 3) return { error: 'Butterfly/BWB requires at least 3 legs' };
 
   const optType = allLegs[0].t.toLowerCase();
-  const sorted  = [...allLegs].sort((a, b) => a.strike - b.strike);
+  if (!sameOptionType(allLegs)) return { error: 'Butterfly/BWB/ratio legs must use the same option type' };
 
   // Identify structure
   const sells = allLegs.filter(l => l.a === 'SELL');
@@ -529,52 +712,44 @@ export function analyzeButterflyBWB(data, legs, expDateObj, dte, credit, prefs, 
 
   if (sells.length === 0 || buys.length === 0) return { error: 'Need both buy and sell legs' };
 
-  // For BWB/ratio: typically 1 buy + 2 sells (or 2 sells + 1 buy upper)
-  // For butterfly: 2 buys (outer) + 2 sells (inner, same strike)
-  const sellStrikes = sells.map(l => l.strike).sort((a, b) => a - b);
-  const buyStrikes  = buys.map(l => l.strike).sort((a, b) => a - b);
+  const groups = groupedByStrike(allLegs);
+  const shortGroups = groups.filter(g => g.netQty < 0);
+  const longGroups = groups.filter(g => g.netQty > 0);
+  if (!shortGroups.length || !longGroups.length) return { error: 'Could not identify net long and short strikes' };
 
-  // Center strike = the sold strike(s)
-  const centerStrike = sells[0].strike;
-  const lowerStrike  = buyStrikes[0];
-  const upperStrike  = buyStrikes.length > 1 ? buyStrikes[buyStrikes.length - 1] : null;
+  const centerGroup = shortGroups.reduce((best, g) => Math.abs(g.netQty) > Math.abs(best.netQty) ? g : best, shortGroups[0]);
+  const centerStrike = centerGroup.strike;
+  const lowerStrike  = groups[0].strike;
+  const upperStrike  = groups.length > 1 ? groups[groups.length - 1].strike : null;
+  const hasLongBelow = longGroups.some(g => g.strike < centerStrike);
+  const hasLongAbove = longGroups.some(g => g.strike > centerStrike);
 
   // Wings
-  const lowerWing = centerStrike - lowerStrike;
-  const upperWing = upperStrike ? upperStrike - centerStrike : null;
-  const isSymmetric = upperWing && Math.abs(lowerWing - upperWing) < 0.26;
-  const isBWB       = upperWing && !isSymmetric;
-  const isRatio     = !upperStrike; // sell 2, buy 1 -- uncapped upside risk
+  const lowerWing = hasLongBelow ? centerStrike - lowerStrike : null;
+  const upperWing = hasLongAbove && upperStrike ? upperStrike - centerStrike : null;
+  const isSymmetric = lowerWing && upperWing && Math.abs(lowerWing - upperWing) < 0.26;
+  const isRatio     = !hasLongBelow || !hasLongAbove;
+  const isBWB       = !isRatio && !isSymmetric;
 
   // Get vol
   const contract = findChainContract(chain, centerStrike, optType);
   const greeks   = extractGreeks(contract);
   const vol      = getBestVol(greeks, hv30);
+  const netGreeks = aggregateLegGreeks(chain, allLegs, vol, price, dte, optType);
+  const absDelta = netGreeks?.delta != null
+    ? Math.abs(netGreeks.delta)
+    : Math.abs(bsDelta(price, centerStrike, dte / 365, vol, optType) || 0);
 
-  // Max profit calculation
-  let maxProfit, maxLoss, lowerBE, upperBE;
-
-  if (isCredit) {
-    // Credit BWB/ratio: max profit at center + credit collected
-    maxProfit = (lowerWing * 100) + (cr * 100); // simplified
-    if (upperWing) {
-      // BWB: max loss is difference between wings minus credit
-      maxLoss = upperWing > lowerWing
-        ? ((upperWing - lowerWing) * 100) - (cr * 100)
-        : ((lowerWing - upperWing) * 100) - (cr * 100);
-      maxLoss = Math.max(0, maxLoss);
-    } else {
-      maxLoss = null; // ratio spread -- uncapped below long strike
-    }
-    lowerBE = parseFloat((lowerStrike + cr).toFixed(2));
-    upperBE = upperStrike ? parseFloat((upperStrike - (upperWing > 0 ? 0 : cr)).toFixed(2)) : null;
-  } else {
-    // Debit butterfly: max profit at center - debit paid
-    maxProfit = (lowerWing * 100) - (cr * 100);
-    maxLoss   = cr * 100; // debit paid
-    lowerBE   = parseFloat((lowerStrike + cr).toFixed(2));
-    upperBE   = upperStrike ? parseFloat((upperStrike - cr).toFixed(2)) : null;
-  }
+  // Expiration payoff from exact leg geometry.
+  const payoff = payoffSummary(legs, isCredit ? cr : -cr, price, [
+    { label: 'Lower wing', px: lowerStrike, note: 'Outer long strike', kind: 'wing' },
+    { label: 'Center', px: centerStrike, note: 'Tent peak / short strike area', kind: 'short' },
+    ...(upperStrike ? [{ label: 'Upper wing', px: upperStrike, note: 'Outer long strike', kind: 'wing' }] : []),
+  ]);
+  const maxProfit = payoff.maxProfit;
+  const maxLoss = payoff.maxLoss;
+  const lowerBE = payoff.breakevens[0] || null;
+  const upperBE = payoff.breakevens[1] || null;
 
   const em = calcExpectedMove(price, vol, dte);
 
@@ -582,6 +757,12 @@ export function analyzeButterflyBWB(data, legs, expDateObj, dte, credit, prefs, 
   let probs = null;
   if (lowerBE && upperBE && maxProfit > 0) {
     probs = calcButterflyProbs(price, lowerBE, centerStrike, upperBE, vol, dte, maxProfit);
+  } else if (lowerBE) {
+    probs = {
+      probMaxProfit: null,
+      probAnyProfit: calcPOW(price, lowerBE, vol, dte, optType),
+      tiers: [],
+    };
   }
 
   // Expected value -- probability-weighted return
@@ -595,16 +776,25 @@ export function analyzeButterflyBWB(data, legs, expDateObj, dte, credit, prefs, 
 
   // Wing ratio for BWB quality
   const wingRatio = upperWing ? parseFloat((lowerWing / upperWing).toFixed(2)) : null;
+  const wingRatioLabel = lowerWing && upperWing ? simpleRatio(lowerWing, upperWing) : null;
   const crRatio   = maxLoss && maxLoss > 0 && isCredit
     ? parseFloat(((cr * 100) / maxLoss * 100).toFixed(1))
     : null;
+  const creditDollars = isCredit ? cr * 100 : 0;
+  const creditCapturePct = isCredit && maxProfit && maxProfit > 0
+    ? parseFloat((creditDollars / maxProfit * 100).toFixed(1))
+    : null;
+  const profitWindowUpside = isCredit && maxProfit != null
+    ? parseFloat((maxProfit - creditDollars).toFixed(0))
+    : null;
 
   const earningsCheck = checkEarningsRisk(earnings, expDateObj);
+  const nowPayoff = payoff.checkpoints.find(p => p.label === 'Now')?.pnl;
 
   const issues = [];
-  if (earningsCheck.risk)                issues.push({ level:'critical', msg:`Earnings ${earningsCheck.date} within expiration` });
-  if (isRatio && !isCredit)             issues.push({ level:'warning',  msg:'Ratio spread with no upper protection -- unlimited loss risk below long strike' });
-  if (price < lowerBE || (upperBE && price > upperBE)) issues.push({ level:'warning', msg:'Price already outside profit zone' });
+  if (earningsCheck.risk)                issues.push({ level:'critical', weight:5, msg:`Earnings ${earningsCheck.date} within expiration` });
+  if (payoff.maxLossUnlimited)          issues.push({ level:'critical', weight:6, msg:'Structure has uncapped expiration loss on one side' });
+  if (nowPayoff != null && nowPayoff < 0) issues.push({ level:'warning', msg:'Price is currently outside the expiration profit zone' });
   if (crRatio && crRatio < 12)          issues.push({ level:'warning',  msg:`Low credit/risk ratio: ${crRatio}%` });
 
   return {
@@ -614,28 +804,37 @@ export function analyzeButterflyBWB(data, legs, expDateObj, dte, credit, prefs, 
     issues,
 
     price, centerStrike, lowerStrike, upperStrike,
-    lowerWing, upperWing, wingRatio,
+    lowerWing, upperWing, wingRatio, wingRatioLabel,
     lowerBE, upperBE,
     maxProfit, maxLoss,
+    collateral: collateralFromPayoff(payoff),
+    maxProfitUnlimited: payoff.maxProfitUnlimited,
+    maxLossUnlimited: payoff.maxLossUnlimited,
     crRatio,
+    creditCapturePct,
+    openingCredit: isCredit ? parseFloat(creditDollars.toFixed(0)) : null,
+    profitWindowUpside,
     vol: pct(vol),
     em,
 
     probMaxProfit:  probs?.probMaxProfit || null,
     probAnyProfit:  probs?.probAnyProfit || null,
     profitTiers:    probs?.tiers         || [],
-    expectedValue,
+    expectedValue: null,
 
-    greeks: greeks || null,
+    absDelta,
+    deltaSource: netGreeks?.source || 'BS',
+    greeks: netGreeks || greeks || null,
     iv: greeks?.iv || null,
 
     supports, resistances,
     earningsRisk: earningsCheck.risk,
     earningsDate: earningsCheck.date,
     modelNotes: modelNotes(data, {
-      greeks,
-      structureNote: 'Butterfly/BWB/ratio risk math is simplified from strike geometry and net credit/debit. Validate complex leg quantities before relying on final risk.',
+      greeks: netGreeks || greeks,
+      structureNote: 'Butterfly/BWB/ratio payoff now uses exact entered legs at expiration. Probability tiers are still estimated from a simplified profit zone.',
     }),
+    payoff,
   };
 }
 
@@ -655,17 +854,24 @@ export function analyzeDebitSpread(data, legs, expDateObj, dte, debit, prefs) {
   const optType     = (buyLeg.t || 'PUT').toLowerCase();
   const isPut       = optType === 'put';
 
+  if (String(buyLeg.t || '').toUpperCase() !== String(sellLeg.t || '').toUpperCase()) {
+    return { error: 'Debit spread legs must use the same option type' };
+  }
   if (!longStrike || !shortStrike) return { error: 'Enter strike prices for both legs' };
 
   const spreadWidth = Math.abs(longStrike - shortStrike);
-  const maxProfit   = (spreadWidth - db) * 100; // per contract
-  const maxLoss     = db * 100;                  // debit paid
+  const payoff = payoffSummary(legs, -db, price, [
+    { label: 'Long strike', px: longStrike, note: 'Option bought', kind: 'long' },
+    { label: 'Short strike', px: shortStrike, note: 'Max profit starts beyond here', kind: 'short' },
+  ]);
+  const maxProfit   = payoff.maxProfit;
+  const maxLoss     = payoff.maxLoss;
   const riskReward  = maxProfit > 0 ? parseFloat((maxLoss / maxProfit).toFixed(2)) : null;
 
   // Breakeven -- different for puts vs calls
-  const breakeven = isPut
+  const breakeven = firstBreakeven(payoff, isPut
     ? parseFloat((longStrike - db).toFixed(2))   // put: long strike - debit
-    : parseFloat((longStrike + db).toFixed(2));  // call: long strike + debit
+    : parseFloat((longStrike + db).toFixed(2)));  // call: long strike + debit
 
   // Distance stock needs to move to breakeven
   const moveToBreakeven = isPut
@@ -702,9 +908,10 @@ export function analyzeDebitSpread(data, legs, expDateObj, dte, debit, prefs) {
   const earningsCheck = checkEarningsRisk(earnings, expDateObj);
 
   const issues = [];
-  if (earningsCheck.risk)      issues.push({ level:'critical', msg:`Earnings ${earningsCheck.date} within expiration -- binary move` });
+  if (payoff.maxLossUnlimited) issues.push({ level:'critical', weight:6, msg:'Undefined/naked risk detected -- not beginner-safe' });
+  if (earningsCheck.risk)      issues.push({ level:'critical', weight:5, msg:`Earnings ${earningsCheck.date} within expiration -- binary move` });
   if (movePct > 10)            issues.push({ level:'warning',  msg:`Needs ${movePct}% move to breakeven -- aggressive target` });
-  if (riskReward && riskReward > 2) issues.push({ level:'warning', msg:`Risk/reward ${riskReward}:1 -- risking more than potential gain` });
+  if (riskReward && riskReward > 2) issues.push({ level:'warning', weight:3, msg:`Risk/reward ${riskReward}:1 -- risking more than potential gain` });
   if (probMaxLoss && probMaxLoss > 0.60) issues.push({ level:'warning', msg:`${pct(probMaxLoss)}% chance of max loss -- low probability trade` });
 
   return {
@@ -715,6 +922,7 @@ export function analyzeDebitSpread(data, legs, expDateObj, dte, debit, prefs) {
     price, longStrike, shortStrike, spreadWidth,
     breakeven, moveToBreakeven, movePct,
     maxProfit, maxLoss, riskReward,
+    collateral: collateralFromPayoff(payoff),
     debit: db,
 
     absDelta,
@@ -729,6 +937,7 @@ export function analyzeDebitSpread(data, legs, expDateObj, dte, debit, prefs) {
     earningsRisk: earningsCheck.risk,
     earningsDate: earningsCheck.date,
     modelNotes: modelNotes(data, { greeks }),
+    payoff,
   };
 }
 
@@ -760,7 +969,26 @@ export function analyzeLongOption(data, legs, expDateObj, dte, premium, prefs) {
   const targetData = calcLongOptionTargets(price, strike, prem, vol, dte, optType);
 
   const em      = calcExpectedMove(price, vol, dte);
-  const maxLoss = prem * 100; // per contract -- what you WILL lose if wrong
+  const payoff  = payoffSummary(legs, -prem, price, [
+    { label: 'Strike', px: strike, note: isCall ? 'Call begins intrinsic value above here' : 'Put begins intrinsic value below here', kind: 'long' },
+  ]);
+  const breakeven = firstBreakeven(payoff, targetData.breakeven);
+  const nowPnl = parseFloat((-prem * 100 + (isCall
+    ? Math.max(0, price - strike)
+    : Math.max(0, strike - price)) * 100).toFixed(2));
+  payoff.checkpoints = isCall
+    ? [
+        { label: 'Now', px: price, pnl: nowPnl, note: '', kind: 'now' },
+        { label: 'Breakeven', px: breakeven, pnl: 0, note: 'P/L is about $0', kind: 'be' },
+        { label: `Max loss $${strike}-`, px: strike, pnl: -payoff.maxLoss, note: 'Call expires worthless at or below strike', kind: 'loss' },
+      ]
+    : [
+        { label: 'Now', px: price, pnl: nowPnl, note: '', kind: 'now' },
+        { label: 'Breakeven', px: breakeven, pnl: 0, note: 'P/L is about $0', kind: 'be' },
+        { label: `Max loss $${strike}+`, px: strike, pnl: -payoff.maxLoss, note: 'Put expires worthless at or above strike', kind: 'loss' },
+        { label: 'Max profit $0', px: 0, pnl: payoff.maxProfit, note: 'Theoretical if stock goes to $0', kind: 'profit' },
+      ];
+  const maxLoss = payoff.maxLoss;
 
   const earningsCheck = checkEarningsRisk(earnings, expDateObj);
 
@@ -777,8 +1005,11 @@ export function analyzeLongOption(data, legs, expDateObj, dte, premium, prefs) {
     issues,
 
     price, strike, prem,
-    breakeven:    targetData.breakeven,
+    breakeven,
     maxLoss,
+    collateral: collateralFromPayoff(payoff),
+    maxProfit: payoff.maxProfit,
+    maxProfitUnlimited: payoff.maxProfitUnlimited,
     theoreticalMax: targetData.theoreticalMax, // null for calls, real for puts
 
     absDelta,
@@ -790,6 +1021,7 @@ export function analyzeLongOption(data, legs, expDateObj, dte, premium, prefs) {
     // Probability framing -- the key feature for long options
     probITM:       targetData.probITM,
     probWorthless: targetData.probWorthless,
+    probTouchBreakeven: targetData.probTouchBreakeven,
     dailyDecay:    targetData.dailyDecayEst,
 
     // Realistic profit targets -- counters "unlimited profit" misconception
@@ -805,5 +1037,49 @@ export function analyzeLongOption(data, legs, expDateObj, dte, premium, prefs) {
       ? `Theoretical max profit is unlimited, but realistically: a 20% move in ${dte} days has ~${pct(targetData.allTargets?.find(t=>t.movePct===0.20)?.prob || 0.05)}% probability at current volatility.`
       : `Theoretical max profit requires stock to reach $0. Realistically: a 20% drop in ${dte} days has ~${pct(targetData.allTargets?.find(t=>t.movePct===0.20)?.prob || 0.05)}% probability.`,
     modelNotes: modelNotes(data, { greeks }),
+    payoff,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// 8. CUSTOM -- generic payoff-engine analysis
+// ---------------------------------------------------------------------------
+export function analyzeCustomPayoff(data, legs, expDateObj, dte, credit, prefs, isCredit = true) {
+  const { price, hv30, supports, resistances, earnings } = data;
+  const entry = safeNum(credit);
+  const netPremiumPerShare = isCredit ? entry : -entry;
+  const payoff = payoffSummary(legs, netPremiumPerShare, price);
+  const earningsCheck = checkEarningsRisk(earnings, expDateObj);
+  const issues = [];
+
+  if (payoff.maxLossUnlimited) {
+    issues.push({ level:'critical', weight:6, msg:'Custom structure has undefined/naked risk' });
+  }
+  if (earningsCheck.risk) {
+    issues.push({ level:'critical', weight:5, msg:`Earnings ${earningsCheck.date} within expiration` });
+  }
+  if (!payoff.breakevens.length) {
+    issues.push({ level:'warning', weight:2, msg:'No breakeven found in modeled expiration range' });
+  }
+
+  return {
+    strategyGroup: 'custom',
+    signal: getSignal(issues),
+    issues,
+    price,
+    entryType: isCredit ? 'credit' : 'debit',
+    entryPremium: entry,
+    breakevens: payoff.breakevens,
+    breakeven: firstBreakeven(payoff),
+    ...riskFieldsFromPayoff(payoff),
+    vol: pct(hv30 || 0.30),
+    supports,
+    resistances,
+    earningsRisk: earningsCheck.risk,
+    earningsDate: earningsCheck.date,
+    modelNotes: modelNotes(data, {
+      structureNote: 'Custom analysis uses the generic payoff engine from the exact entered legs. Probability and strategy-specific quality checks are intentionally limited.',
+    }),
+    payoff,
   };
 }

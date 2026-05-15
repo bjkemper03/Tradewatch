@@ -4,8 +4,22 @@
 // Primary: Tradier  |  Fallback: Polygon
 // =============================================================================
 
+import { applyApiHeaders, checkRateLimit, cleanTicker, handleOptions } from './_security.js';
+
 const POLYGON_KEY = process.env.POLYGON_KEY;
 const TRADIER_KEY = process.env.TRADIER_KEY;
+
+async function readJson(res) {
+  const text = await res.text();
+  if (!text) return null;
+  const trimmed = text.trim();
+  if (!trimmed.startsWith('{') && !trimmed.startsWith('[')) return null;
+  try {
+    return JSON.parse(trimmed);
+  } catch {
+    return null;
+  }
+}
 
 async function earningsTradier(ticker) {
   try {
@@ -19,7 +33,8 @@ async function earningsTradier(ticker) {
         signal: AbortSignal.timeout(8000),
       }
     );
-    const d      = await res.json();
+    const d      = await readJson(res);
+    if (!d) return null;
     const events = d?.fundamentals?.[0]?.corporate_calendars;
     if (!events) return null;
     const earnings = events
@@ -51,18 +66,18 @@ async function earningsPolygon(ticker) {
 }
 
 export default async function handler(req, res) {
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS');
-  if (req.method === 'OPTIONS') return res.status(200).end();
+  if (handleOptions(req, res, ['GET'])) return;
+  applyApiHeaders(req, res, ['GET','OPTIONS']);
   if (req.method !== 'GET') return res.status(405).json({ error: 'Method not allowed' });
+  if (!checkRateLimit(req, res, { key: 'earnings', limit: 60 })) return;
 
-  const { ticker } = req.query;
-  if (!ticker) return res.status(400).json({ error: 'Missing ticker' });
+  const ticker = cleanTicker(req.query.ticker);
+  if (!ticker) return res.status(400).json({ error: 'Enter a valid ticker symbol' });
 
   try {
     let result = null;
-    if (TRADIER_KEY) result = await earningsTradier(ticker.toUpperCase());
-    if (!result)     result = await earningsPolygon(ticker.toUpperCase());
+    if (TRADIER_KEY) result = await earningsTradier(ticker);
+    if (!result)     result = await earningsPolygon(ticker);
 
     if (!result) return res.status(200).json({ ok: true, ticker, date: null, clear: true });
     return res.status(200).json({ ok: true, ...result });

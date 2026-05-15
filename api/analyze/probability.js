@@ -236,40 +236,64 @@ export function calcLongOptionTargets(price, strike, premium, vol, dte, optionTy
     ? probBelow(price, strike, vol, T)
     : probAbove(price, strike, vol, T);
 
-  // Realistic price targets based on % moves
-  // For calls: need price to go UP. For puts: need price to go DOWN.
-  const movePcts = [0.05, 0.10, 0.20, 0.30, 0.50];
-  const targets = movePcts.map(pct => {
+  function targetForProfitDollars(dollars, label) {
+    const profitPerShare = dollars / 100;
     const targetPrice = isCall
-      ? price * (1 + pct)
-      : price * (1 - pct);
-
-    // Intrinsic value at target (ignores time value -- conservative)
-    const intrinsic = isCall
-      ? Math.max(0, targetPrice - strike)
-      : Math.max(0, strike - targetPrice);
-
-    const profit      = intrinsic - premium;
-    const profitPct   = parseFloat((profit / premium * 100).toFixed(0));
-    const probHitting = isCall
+      ? strike + premium + profitPerShare
+      : strike - premium - profitPerShare;
+    if (targetPrice <= 0) return null;
+    const movePct = Math.abs(targetPrice - price) / price;
+    const probExp = isCall
       ? probAbove(price, targetPrice, vol, T)
       : probBelow(price, targetPrice, vol, T);
-    const probTouch = calcTouchProbability(price, targetPrice, vol, dte);
-
     return {
-      movePct:    pct,
+      label,
+      movePct: parseFloat(movePct.toFixed(4)),
       targetPrice: parseFloat(targetPrice.toFixed(2)),
-      intrinsic:  parseFloat(intrinsic.toFixed(2)),
-      profit:     parseFloat(profit.toFixed(2)),
+      intrinsic: parseFloat((premium + profitPerShare).toFixed(2)),
+      profit: parseFloat(profitPerShare.toFixed(2)),
+      profitDollars: dollars,
+      profitPct: parseFloat((profitPerShare / premium * 100).toFixed(0)),
+      prob: probExp,
+      probTouch: calcTouchProbability(price, targetPrice, vol, dte),
+    };
+  }
+
+  const targetRows = [
+    {
+      label: 'Breakeven',
+      movePct: parseFloat((Math.abs(breakeven - price) / price).toFixed(4)),
+      targetPrice: breakeven,
+      intrinsic: premium,
+      profit: 0,
+      profitDollars: 0,
+      profitPct: 0,
+      prob: probITM,
+      probTouch: calcTouchProbability(price, breakeven, vol, dte),
+    },
+    ...[100, 250, 500, 1000].map(dollars => targetForProfitDollars(dollars, `+$${dollars}`)),
+  ].filter(Boolean).filter((row, idx, arr) =>
+    arr.findIndex(o => Math.abs(o.targetPrice - row.targetPrice) < 0.01) === idx
+  );
+
+  // Keep legacy move-based targets available for context/debugging.
+  const movePcts = [0.05, 0.10, 0.20, 0.30, 0.50];
+  const moveTargets = movePcts.map(pct => {
+    const targetPrice = isCall ? price * (1 + pct) : price * (1 - pct);
+    const intrinsic = isCall ? Math.max(0, targetPrice - strike) : Math.max(0, strike - targetPrice);
+    const profit = intrinsic - premium;
+    return {
+      label: `${pct * 100}% move`,
+      movePct: pct,
+      targetPrice: parseFloat(targetPrice.toFixed(2)),
+      intrinsic: parseFloat(intrinsic.toFixed(2)),
+      profit: parseFloat(profit.toFixed(2)),
       profitDollars: parseFloat((profit * 100).toFixed(0)),
-      profitPct,
-      prob:       probHitting,
-      probTouch,
+      profitPct: parseFloat((profit / premium * 100).toFixed(0)),
+      prob: isCall ? probAbove(price, targetPrice, vol, T) : probBelow(price, targetPrice, vol, T),
+      probTouch: calcTouchProbability(price, targetPrice, vol, dte),
     };
   });
-
-  // Filter to only show profitable targets
-  const profitableTargets = targets.filter(t => t.profit > 0 && (t.prob || 0) >= 0.005);
 
   // Theta warning -- daily decay estimate (rough)
   // Using simplified: theta ≈ -(premium * vol) / (2 * sqrt(T)) / 365
@@ -281,8 +305,9 @@ export function calcLongOptionTargets(price, strike, premium, vol, dte, optionTy
     breakeven,
     probITM,
     probWorthless,
-    targets: profitableTargets,
-    allTargets: targets,
+    targets: targetRows,
+    allTargets: moveTargets,
+    probTouchBreakeven: calcTouchProbability(price, breakeven, vol, dte),
     dailyDecayEst,
     maxLoss:     parseFloat((premium * 100).toFixed(2)), // per contract
     theoreticalMax: isCall ? null : parseFloat(((strike - premium) * 100).toFixed(2)),

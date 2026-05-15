@@ -13,6 +13,18 @@ const TRADIER_HEADERS = {
   'Accept':        'application/json',
 };
 
+async function readJson(res) {
+  const text = await res.text();
+  if (!text) return null;
+  const trimmed = text.trim();
+  if (!trimmed.startsWith('{') && !trimmed.startsWith('[')) return null;
+  try {
+    return JSON.parse(trimmed);
+  } catch {
+    return null;
+  }
+}
+
 // ---------------------------------------------------------------------------
 // TRADIER -- real-time quote (primary price source)
 // Returns: { price, change, changePct, volume, date } or null
@@ -24,7 +36,7 @@ export async function getTradierQuote(ticker) {
       `https://api.tradier.com/v1/markets/quotes?symbols=${ticker}`,
       { headers: TRADIER_HEADERS, signal: AbortSignal.timeout(8000) }
     );
-    const d = await res.json();
+    const d = await readJson(res);
     const q = d?.quotes?.quote;
     if (!q || q.last == null) return null;
     return {
@@ -52,7 +64,7 @@ export async function getTradierChain(ticker, expDate) {
       `https://api.tradier.com/v1/markets/options/chains?symbol=${ticker}&expiration=${expDate}&greeks=true`,
       { headers: TRADIER_HEADERS, signal: AbortSignal.timeout(10000) }
     );
-    const d = await res.json();
+    const d = await readJson(res);
     const chain = d?.options?.option;
     if (!chain) return null;
     // Normalize to array
@@ -74,15 +86,15 @@ export async function getTradierEarnings(ticker) {
       `https://api.tradier.com/v1/markets/fundamentals/calendars?symbols=${ticker}`,
       { headers: TRADIER_HEADERS, signal: AbortSignal.timeout(8000) }
     );
-    const d      = await res.json();
+    const d      = await readJson(res);
+    if (!d) return null;
     const events = d?.fundamentals?.[0]?.corporate_calendars;
     if (!events || !events.length) return null;
     const upcoming = events
       .filter(e => e.type === 'Earnings' && new Date(e.start_date) >= new Date())
       .sort((a, b) => new Date(a.start_date) - new Date(b.start_date));
     return upcoming.length ? { date: upcoming[0].start_date } : null;
-  } catch (e) {
-    console.warn('[dataFetch] Tradier earnings failed:', e.message);
+  } catch {
     return null;
   }
 }
@@ -99,7 +111,7 @@ export async function getTradierExpirations(ticker) {
       `https://api.tradier.com/v1/markets/options/expirations?symbol=${ticker}&includeAllRoots=true`,
       { headers: TRADIER_HEADERS, signal: AbortSignal.timeout(8000) }
     );
-    const d = await res.json();
+    const d = await readJson(res);
     return d?.expirations?.date || null;
   } catch (e) {
     console.warn('[dataFetch] Tradier expirations failed:', e.message);

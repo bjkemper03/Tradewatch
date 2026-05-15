@@ -10,6 +10,8 @@ const API = { market:'/api/market', quote:'/api/quote', earnings:'/api/earnings'
 const CK = { mkt:'op_mkt_v2', sec:'op_sec_v2', earn:'op_earn_v2_', lp:'op_lp_v2_', prefs:'op_prefs_v2' };
 const TTL = { mkt:4*3600000, sec:4*3600000, earn:12*3600000, lp:15*60000 };
 const TK = 'op_trades_v2', HK = 'op_hist_v2';
+// UI convenience only. Real admin authorization must happen server-side.
+const ADMIN_EMAILS = ['benkemper751@gmail.com', 'bjkemper03@gmail.com'];
 
 const DEFAULT_PREFS = {
   displayName:'Trader', primaryStrategy:'credit',

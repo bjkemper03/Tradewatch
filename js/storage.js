@@ -109,10 +109,13 @@ function onAuthStateChange(callback) {
 // User settings
 // ---------------------------------------------------------------------------
 async function getUserSettings() {
+  const user = await getCurrentUser();
+  if (!user) throw new Error('Not authenticated');
   const { data, error } = await sb()
     .from('user_settings')
     .select('settings')
-    .single();
+    .eq('user_id', user.id)
+    .maybeSingle();
   if (error && error.code !== 'PGRST116') throw error;  // PGRST116 = no rows
   return data?.settings ? { ...DEFAULT_PREFS, ...data.settings } : { ...DEFAULT_PREFS };
 }
@@ -147,12 +150,16 @@ async function getOpenTrades() {
 }
 
 async function getTradeById(id) {
+  const user = await getCurrentUser();
+  if (!user) throw new Error('Not authenticated');
   const { data, error } = await sb()
     .from('trades')
     .select('*')
     .eq('id', id)
-    .single();
+    .eq('user_id', user.id)
+    .maybeSingle();
   if (error) throw error;
+  if (!data) throw new Error('Trade not found');
   return data;
 }
 
@@ -312,10 +319,13 @@ async function deleteTrade(id) {
 // Historical baseline
 // ---------------------------------------------------------------------------
 async function getBaseline() {
+  const user = await getCurrentUser();
+  if (!user) throw new Error('Not authenticated');
   const { data, error } = await sb()
     .from('historical_baseline')
     .select('*')
-    .single();
+    .eq('user_id', user.id)
+    .maybeSingle();
   if (error && error.code !== 'PGRST116') throw error;
   return data || { ...DEFAULT_HIST };
 }
@@ -340,11 +350,14 @@ async function saveBaseline(baseline) {
 // Journal
 // ---------------------------------------------------------------------------
 async function getJournalNote(date) {
+  const user = await getCurrentUser();
+  if (!user) throw new Error('Not authenticated');
   const { data, error } = await sb()
     .from('journal')
     .select('*')
+    .eq('user_id', user.id)
     .eq('note_date', date)
-    .single();
+    .maybeSingle();
   if (error && error.code !== 'PGRST116') throw error;
   return data || null;
 }
@@ -364,9 +377,12 @@ async function saveJournalNote(date, content, marketScore = null) {
 }
 
 async function getRecentJournal(limit = 30) {
+  const user = await getCurrentUser();
+  if (!user) throw new Error('Not authenticated');
   const { data, error } = await sb()
     .from('journal')
     .select('*')
+    .eq('user_id', user.id)
     .order('note_date', { ascending: false })
     .limit(limit);
   if (error) throw error;

@@ -8,6 +8,18 @@ const $ = id => document.getElementById(id);
 const sigC = s => s==='GREEN'?'#22c55e':s==='YELLOW'?'#f59e0b':'#ef4444';
 const barC = s => s>=62?'#22c55e':s>=42?'#f59e0b':'#ef4444';
 
+function esc(v) {
+  return String(v == null ? '' : v).replace(/[&<>"']/g, function(ch) {
+    return ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' })[ch];
+  });
+}
+
+function isAdminUser() {
+  // This only hides/shows the UI preview. It is not a security boundary.
+  var email = currentUser && currentUser.email ? currentUser.email.toLowerCase() : '';
+  return ADMIN_EMAILS.map(function(e) { return e.toLowerCase(); }).indexOf(email) !== -1;
+}
+
 function toast(m, d=2500) {
   const t = $('toast');
   t.textContent = m;

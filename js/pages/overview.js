@@ -17,20 +17,24 @@ function renderOverview() {
     }
 
     var vix = mkt.vix, fg = mkt.fg, spy = mkt.spy, qqq = mkt.qqq, hyg = mkt.hyg, rsp = mkt.rsp;
-    var creditChg = (hyg && hyg.perf5) ? -hyg.perf5 * 2 : 0;
-    var rspDiff   = (rsp && spy) ? parseFloat((rsp.perf5 - spy.perf5).toFixed(2)) : 0;
-    var vs        = sVIX(vix && vix.level, (vix && vix.chg) || 0);
-    var ss        = sStruct(spy && spy.above50, spy && spy.above200, qqq && qqq.above50, rspDiff);
-    var sent      = sSent(fg, creditChg);
-    var composite = Math.round(vs * 0.40 + ss * 0.35 + sent * 0.15 + 10);
-    var sig       = getSig(vs, ss, sent);
+    var signalResult = buildSignalResult(mkt);
+    var creditChg = signalResult.creditChg;
+    var rspDiff   = signalResult.rspDiff;
+    var vs        = signalResult.vixScore;
+    var ss        = signalResult.structScore;
+    var sent      = signalResult.sentScore;
+    var composite = signalResult.composite;
+    var sig       = signalResult.signal;
     var col       = sigC(sig);
     var fgScore   = (fg && fg.score) || 50;
     var fgCol     = fgScore > 60 ? '#22c55e' : fgScore < 40 ? '#ef4444' : '#f59e0b';
-    var sigLabel  = sig === 'GREEN' ? 'Strong Market Conditions' : sig === 'YELLOW' ? 'Mixed Market Conditions' : 'Poor Market Conditions';
+    var sigLabel  = sig === 'GREEN' ? 'Risk-On Backdrop' : sig === 'YELLOW' ? 'Mixed Backdrop' : 'Risk-Off Backdrop';
 
-    var cacheTs = JSON.parse(localStorage.getItem(CK.mkt) || '{}').ts || Date.now();
+    var cacheObj = {};
+    try { cacheObj = JSON.parse(localStorage.getItem(CK.mkt) || '{}'); } catch(e) { cacheObj = {}; }
+    var cacheTs = cacheObj.ts || (mkt && mkt.fetchedAt ? Date.parse(mkt.fetchedAt) : null);
     var age     = Math.round((Date.now() - cacheTs) / 60000);
+    var ageText = cacheTs ? (age < 2 ? 'Just fetched' : age + 'm ago') : 'Fetch time unknown';
 
     // Update header signal pill
     var pill = $('hdr-sig');
@@ -76,11 +80,11 @@ function renderOverview() {
 
       // ── Market tiles row 2 ────────────────────────────────────────────────
       '<div class="tiles">' +
-        quickTile('SPY 50MA',  (spy && spy.above50)  ? 'Above' : 'Below', (spy && spy.above50)  ? 'var(--green)' : 'var(--red)') +
-        quickTile('QQQ 50MA',  (qqq && qqq.above50)  ? 'Above' : 'Below', (qqq && qqq.above50)  ? 'var(--green)' : 'var(--red)') +
+        quickTile('SPY 50MA',  (spy && spy.above50 !== undefined) ? (spy.above50 ? 'Above' : 'Below') : 'N/A', (spy && spy.above50 !== undefined) ? (spy.above50 ? 'var(--green)' : 'var(--red)') : 'var(--text3)') +
+        quickTile('QQQ 50MA',  (qqq && qqq.above50 !== undefined) ? (qqq.above50 ? 'Above' : 'Below') : 'N/A', (qqq && qqq.above50 !== undefined) ? (qqq.above50 ? 'var(--green)' : 'var(--red)') : 'var(--text3)') +
         quickTile('RSP/SPY',
-          rspDiff ? (rspDiff > 0 ? '+' : '') + rspDiff + '%' : 'N/A',
-          rspDiff > 0.5 ? 'var(--green)' : rspDiff < -1 ? 'var(--red)' : 'var(--yellow)') +
+          rspDiff != null ? (rspDiff > 0 ? '+' : '') + rspDiff + '%' : 'N/A',
+          rspDiff == null ? 'var(--text3)' : rspDiff > 0.5 ? 'var(--green)' : rspDiff < -1 ? 'var(--red)' : 'var(--yellow)') +
       '</div>' +
 
       // ── Guidance ──────────────────────────────────────────────────────────
@@ -93,13 +97,13 @@ function renderOverview() {
       (prefs.marketNote
         ? '<div class="card" style="border-color:rgba(245,158,11,.3)">' +
             '<div style="font-size:10px;color:var(--yellow);font-weight:600;margin-bottom:5px">MARKET NOTE</div>' +
-            '<div style="font-size:12px;color:var(--text2);line-height:1.6">' + prefs.marketNote + '</div>' +
+            '<div style="font-size:12px;color:var(--text2);line-height:1.6">' + esc(prefs.marketNote) + '</div>' +
           '</div>'
         : '') +
 
       // ── Cache info ────────────────────────────────────────────────────────
       '<div style="text-align:center;padding:4px 0 12px">' +
-        '<span class="dl"><span class="dl-dot"></span>' + (age < 2 ? 'Just fetched' : age + 'm ago') + ' &bull; 4hr cache</span><br>' +
+        '<span class="dl"><span class="dl-dot"></span>' + ageText + ' &bull; 4hr cache</span><br>' +
         '<button class="btn btn-ghost btn-sm" style="margin-top:8px" onclick="fetchMarketData(true).then(function(){renderOverview()})">&#8635; Force Refresh</button>' +
       '</div>' +
 

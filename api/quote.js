@@ -4,6 +4,8 @@
 // Primary: Tradier (real-time)  |  Fallback: Polygon (15-min delayed on free tier)
 // =============================================================================
 
+import { applyApiHeaders, checkRateLimit, cleanTicker, handleOptions } from './_security.js';
+
 const POLYGON_KEY = process.env.POLYGON_KEY;
 const TRADIER_KEY = process.env.TRADIER_KEY;
 
@@ -54,21 +56,21 @@ async function quotePolygon(ticker) {
 }
 
 export default async function handler(req, res) {
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS');
-  if (req.method === 'OPTIONS') return res.status(200).end();
+  if (handleOptions(req, res, ['GET'])) return;
+  applyApiHeaders(req, res, ['GET','OPTIONS']);
   if (req.method !== 'GET') return res.status(405).json({ error: 'Method not allowed' });
+  if (!checkRateLimit(req, res, { key: 'quote', limit: 80 })) return;
 
-  const { ticker } = req.query;
-  if (!ticker) return res.status(400).json({ error: 'Missing ticker parameter' });
+  const ticker = cleanTicker(req.query.ticker);
+  if (!ticker) return res.status(400).json({ error: 'Enter a valid ticker symbol' });
 
   try {
     let quote = null;
-    if (TRADIER_KEY) quote = await quoteTradier(ticker.toUpperCase());
-    if (!quote)      quote = await quotePolygon(ticker.toUpperCase());
+    if (TRADIER_KEY) quote = await quoteTradier(ticker);
+    if (!quote)      quote = await quotePolygon(ticker);
     if (!quote)      return res.status(404).json({ ok: false, error: 'Quote not found' });
 
-    return res.status(200).json({ ok: true, ticker: ticker.toUpperCase(), ...quote });
+    return res.status(200).json({ ok: true, ticker, ...quote });
   } catch (err) {
     console.error('Quote error:', err);
     return res.status(500).json({ ok: false, error: err.message });

@@ -5,6 +5,8 @@
 // Cache TTL: 4 hours. Polygon is only called if cache is stale.
 // =============================================================================
 
+import { applyApiHeaders, checkRateLimit, handleOptions } from './_security.js';
+
 const POLYGON_KEY  = process.env.POLYGON_KEY;
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_KEY = process.env.SUPABASE_SERVICE_KEY;
@@ -164,10 +166,10 @@ async function fetchFearGreed() {
 // Handler
 // ---------------------------------------------------------------------------
 export default async function handler(req, res) {
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS');
-  if (req.method === 'OPTIONS') return res.status(200).end();
+  if (handleOptions(req, res, ['GET'])) return;
+  applyApiHeaders(req, res, ['GET','OPTIONS']);
   if (req.method !== 'GET')    return res.status(405).json({ error: 'Method not allowed' });
+  if (!checkRateLimit(req, res, { key: 'market', limit: 40 })) return;
 
   const force = req.query.force === 'true';
 

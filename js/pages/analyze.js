@@ -41,8 +41,14 @@ function renderAnalyze() {
         '<input id="az-cr" placeholder="0.45" type="number" step="0.01" oninput="azUpdateCol()" style="font-family:var(--mono)">' +
       '</div>' +
     '</div>' +
+    '<div class="fld"><label>Entry Type</label>' +
+      '<select id="az-entry" onchange="azUpdateCol()">' +
+        '<option value="credit">Credit to open</option>' +
+        '<option value="debit">Debit to open</option>' +
+      '</select>' +
+    '</div>' +
     '<div class="fg2">' +
-      '<div class="fld"><label>Collateral $ (auto)</label>' +
+      '<div class="fld"><label>Collateral $ (estimate)</label>' +
         '<input id="az-col" placeholder="Auto" type="number" step="1" style="font-family:var(--mono)">' +
       '</div>' +
       '<div class="fld"><label>Notes</label>' +
@@ -62,6 +68,8 @@ function azChangeStrat(s) {
   azStrat   = s;
   azLegData = (DEF[s] || [{ a:'BUY', t:'PUT', n:1, s:'' }]).map(function(l) { return Object.assign({}, l); });
   buildAzLegs();
+  var entry = $('az-entry');
+  if (entry) entry.value = isDebitStrat(s) ? 'debit' : 'credit';
   azUpdateCol();
 }
 
@@ -98,7 +106,8 @@ function buildAzLegs() {
 
 function azUpdateCol() {
   var cr  = safeNum($('az-cr') ? $('az-cr').value : 0);
-  var col = calcCollateral(azStrat, azLegData, cr);
+  var entryType = $('az-entry') ? $('az-entry').value : (isDebitStrat(azStrat) ? 'debit' : 'credit');
+  var col = calcCollateral(azStrat, azLegData, cr, entryType);
   var el  = $('az-col');
   if (el) el.value = col > 0 ? col.toFixed(0) : '';
 }
@@ -110,6 +119,7 @@ async function runAnalysis() {
   var ticker = $('az-tk') ? $('az-tk').value.trim().toUpperCase() : '';
   var expRaw = $('az-exp') ? $('az-exp').value.trim() : '';
   var credit = safeNum($('az-cr') ? $('az-cr').value : 0);
+  var entryType = $('az-entry') ? $('az-entry').value : (isDebitStrat(azStrat) ? 'debit' : 'credit');
   if (!ticker) { alert('Enter a ticker symbol'); return; }
 
   var btn = $('az-btn');
@@ -126,6 +136,7 @@ async function runAnalysis() {
         legs:     azLegData,
         expDate:  expRaw,
         credit:   credit,
+        entryType: entryType,
         strategy: azStrat,
         prefs: {
           cushionMin:    prefs.cushionMin,
@@ -158,7 +169,8 @@ async function runAnalysis() {
       price:         d.price,
       lastDate:      d.lastDate,
       credit:        credit,
-      collateral:    d.collateral || calcCollateral(azStrat, azLegData, credit),
+      entryType:     d.entryType || entryType,
+      collateral:    d.collateral != null ? d.collateral : d.maxLoss,
       breakeven:     d.breakeven     || null,
       cushionPct:    d.cushionPct    || null,
       absDelta:      d.absDelta      || null,
@@ -175,6 +187,8 @@ async function runAnalysis() {
       probWorthless: d.probWorthless || null,
       profitTargets: d.profitTargets || null,
       modelNotes:    d.modelNotes    || [],
+      structureWarning: d.structureWarning || null,
+      selectedStrategy: d.selectedStrategy || azStrat,
       notes:         $('az-ctx') ? $('az-ctx').value.trim() : '',
       issues:        d.issues        || []
     };
@@ -211,16 +225,31 @@ function renderGreekBox(d) {
 }
 
 function renderMetricGrid(metrics) {
-  if (metrics.length % 2 === 1) {
-    metrics.push(mc2('STRUCTURE', 'Defined', 'var(--text2)'));
-  }
-  return '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:0 12px 10px">' + metrics.join('') + '</div>';
+  var items = metrics.slice();
+  return '<div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin:0 12px 10px">' + items.join('') + '</div>';
+}
+
+function isSpreadGroup(sg) {
+  return ['credit_spread','put_debit_spread','call_debit_spread','iron_condor','iron_butterfly'].indexOf(sg) !== -1;
 }
 
 function fmtMoney(v) {
   if (v == null || !Number.isFinite(safeNum(v))) return 'N/A';
   var n = safeNum(v);
   return (n < 0 ? '-$' : '$') + Math.abs(n).toFixed(0);
+}
+
+function fmtRiskMoney(v, unlimited) {
+  if (unlimited) return 'Unlimited';
+  return fmtMoney(v);
+}
+
+function fmtAsOf(v) {
+  if (!v) return '';
+  var n = Number(v);
+  var dt = Number.isFinite(n) && String(v).length >= 10 ? new Date(n) : new Date(v);
+  if (isNaN(dt.getTime())) return '';
+  return dt.toLocaleDateString(undefined, { month:'short', day:'numeric' });
 }
 
 function renderModelNotes(d) {
@@ -241,10 +270,25 @@ function renderModelNotes(d) {
 }
 
 function estimatePayoff(d, px) {
+  if (d.payoff && d.payoff.points && d.payoff.points.length) {
+    var pts = d.payoff.points;
+    if (px <= pts[0].px) return pts[0].pnl;
+    if (px >= pts[pts.length - 1].px) return pts[pts.length - 1].pnl;
+    for (var j = 1; j < pts.length; j++) {
+      if (px <= pts[j].px) {
+        var a = pts[j - 1];
+        var b = pts[j];
+        var span = b.px - a.px;
+        if (!span) return b.pnl;
+        return a.pnl + (b.pnl - a.pnl) * ((px - a.px) / span);
+      }
+    }
+  }
   var legs = azLegData || [];
   if (!legs.length) return null;
   var premium = safeNum($('az-cr') ? $('az-cr').value : d.credit || d.prem || d.debit || 0);
-  var netPremium = isDebitStrat(d.strategy) ? -premium : premium;
+  var entryType = $('az-entry') ? $('az-entry').value : (isDebitStrat(d.strategy) ? 'debit' : 'credit');
+  var netPremium = entryType === 'debit' ? -premium : premium;
   var perShare = d.strategy === 'COVERED CALL' ? (px - d.price) + premium : netPremium;
   for (var i = 0; i < legs.length; i++) {
     var leg = legs[i];
@@ -308,6 +352,23 @@ function payoffShapeLeave() {
 }
 
 function payoffExactRows(d, payoffAt) {
+  if (d.payoff && d.payoff.checkpoints && d.payoff.checkpoints.length) {
+    var sg0 = d.strategyGroup || '';
+    var rows0 = d.payoff.checkpoints.map(function(m) {
+      return {
+        label: m.label,
+        px: m.px,
+        pnl: m.pnl,
+        note: m.note || '',
+        kind: m.kind || ''
+      };
+    });
+    if (isSpreadGroup(sg0)) {
+      var keep = { be: true, short: true, long: true, wing: true, loss: true };
+      rows0 = rows0.filter(function(m) { return keep[m.kind]; }).slice(0, 4);
+    }
+    return rows0;
+  }
   var sg = d.strategyGroup || '';
   var rows = [];
   function row(label, px, note, kind) {
@@ -320,7 +381,7 @@ function payoffExactRows(d, payoffAt) {
   var buyCall = (azLegData || []).find(function(l) { return l.a === 'BUY' && l.t === 'CALL'; });
 
   row('Now', safeNum(d.price), '', 'now');
-  if (d.breakeven) row('Breakeven', safeNum(d.breakeven), 'P/L is about $0', 'be');
+  if (d.breakeven && !isSpreadGroup(sg)) row('Breakeven', safeNum(d.breakeven), 'P/L is about $0', 'be');
   if (d.lowerBE) row('Lower BE', safeNum(d.lowerBE), 'Lower profit boundary', 'be');
   if (d.upperBE) row('Upper BE', safeNum(d.upperBE), 'Upper profit boundary', 'be');
   if (d.putBreakeven) row('Put BE', safeNum(d.putBreakeven), 'Lower profit boundary', 'be');
@@ -350,22 +411,27 @@ function payoffExactRows(d, payoffAt) {
 
 function renderPayoffShape(d) {
   if (!d.price) return '';
-  var strikes = (azLegData || []).map(function(l) { return safeNum(l.s); }).filter(function(s) { return s > 0; });
-  var beVals = [d.breakeven, d.lowerBE, d.upperBE, d.putBreakeven, d.callBreakeven]
-    .map(function(v) { return safeNum(v); })
-    .filter(function(v) { return v > 0; });
-  var anchorVals = strikes.concat(beVals).concat([d.price]);
-  var minAnchor = Math.min.apply(null, anchorVals);
-  var maxAnchor = Math.max.apply(null, anchorVals);
-  var span = Math.max(d.price * 0.18, maxAnchor - minAnchor, 1);
-  var low = Math.max(0.01, Math.min(d.price * 0.75, minAnchor - span * 0.35));
-  var high = Math.max(d.price * 1.25, maxAnchor + span * 0.35);
-  var points = [];
-  for (var i = 0; i <= 96; i++) {
-    var px = low + (high - low) * i / 96;
-    var pnl = estimatePayoff(d, px);
-    if (pnl == null || !Number.isFinite(pnl)) return '';
-    points.push({ px: px, pnl: pnl });
+  var points = d.payoff && d.payoff.points && d.payoff.points.length ? d.payoff.points : null;
+  var low = d.payoff && d.payoff.low ? safeNum(d.payoff.low) : null;
+  var high = d.payoff && d.payoff.high ? safeNum(d.payoff.high) : null;
+  if (!points) {
+    var strikes = (azLegData || []).map(function(l) { return safeNum(l.s); }).filter(function(s) { return s > 0; });
+    var beVals = [d.breakeven, d.lowerBE, d.upperBE, d.putBreakeven, d.callBreakeven]
+      .map(function(v) { return safeNum(v); })
+      .filter(function(v) { return v > 0; });
+    var anchorVals = strikes.concat(beVals).concat([d.price]);
+    var minAnchor = Math.min.apply(null, anchorVals);
+    var maxAnchor = Math.max.apply(null, anchorVals);
+    var span = Math.max(d.price * 0.18, maxAnchor - minAnchor, 1);
+    low = Math.max(0.01, Math.min(d.price * 0.75, minAnchor - span * 0.35));
+    high = Math.max(d.price * 1.25, maxAnchor + span * 0.35);
+    points = [];
+    for (var i = 0; i <= 96; i++) {
+      var px = low + (high - low) * i / 96;
+      var pnl = estimatePayoff(d, px);
+      if (pnl == null || !Number.isFinite(pnl)) return '';
+      points.push({ px: px, pnl: pnl });
+    }
   }
   var minY = Math.min.apply(null, points.map(function(p) { return p.pnl; }).concat([0]));
   var maxY = Math.max.apply(null, points.map(function(p) { return p.pnl; }).concat([0]));
@@ -381,14 +447,15 @@ function renderPayoffShape(d) {
   }
   var checkpointRows = payoffExactRows(d, payoffAt);
   var markers = checkpointRows.filter(function(m) {
-    return m.px > 0 && m.px >= low && m.px <= high && m.kind !== 'loss';
+    return m.px > 0 && m.px >= low && m.px <= high;
   });
   var markerSvg = markers.slice(0, 8).map(function(m, idx) {
     var col = m.kind === 'now' ? 'var(--blue2)' : m.kind === 'be' ? 'var(--yellow)' : m.kind === 'short' ? '#fca5a5' : m.kind === 'profit' ? '#22c55e' : '#86efac';
     var mx = x({ px: m.px });
     var ty = idx % 2 ? h - 5 : 10;
-    return '<line x1="' + mx.toFixed(1) + '" y1="' + pad + '" x2="' + mx.toFixed(1) + '" y2="' + (h - pad) + '" stroke="' + col + '" stroke-width="1" stroke-dasharray="3 4" opacity=".75"/>' +
-      '<text x="' + mx.toFixed(1) + '" y="' + ty + '" text-anchor="middle" fill="' + col + '" font-size="6" font-family="monospace">' + m.label.replace(/Max profit starts/g, 'MaxProfit').replace(/Breakeven/g, 'BE').replace(/ /g, '') + '</text>';
+    var label = isSpreadGroup(d.strategyGroup || '') && m.kind !== 'now' ? '' : m.label.replace(/Max profit starts/g, 'MaxProfit').replace(/Breakeven/g, 'BE').replace(/ /g, '');
+    return '<line x1="' + mx.toFixed(1) + '" y1="' + pad + '" x2="' + mx.toFixed(1) + '" y2="' + (h - pad) + '" stroke="' + col + '" stroke-width="1" stroke-dasharray="3 4" opacity=".65"/>' +
+      (label ? '<text x="' + mx.toFixed(1) + '" y="' + ty + '" text-anchor="middle" fill="' + col + '" font-size="6" font-family="monospace">' + label + '</text>' : '');
   }).join('');
   payoffShapeData = { low: low, high: high, minY: minY, maxY: maxY, w: w, h: h, pad: pad, result: d };
   return '<div class="card">' +
@@ -459,8 +526,8 @@ function renderTradeContext(d) {
   }
   var sg = d.strategyGroup || '';
   var probTiles = '';
-  if (d.probWorthless != null) probTiles += mini(sg === 'long_call' || sg === 'long_put' ? 'Exp worthless' : 'Exp worthless', Math.round(d.probWorthless * 100) + '%', sg === 'long_call' || sg === 'long_put' ? '#ef4444' : '#22c55e', 'At expiration');
-  if (d.probAnyProfit != null) probTiles += mini('Exp profit', Math.round(d.probAnyProfit * 100) + '%', '#22c55e', 'At expiration');
+  if (d.probWorthless != null) probTiles += mini('Exp worthless', Math.round(d.probWorthless * 100) + '%', sg === 'long_call' || sg === 'long_put' ? '#ef4444' : '#22c55e', 'At expiration');
+  if (!isSpreadGroup(sg) && d.probAnyProfit != null) probTiles += mini('Exp profit', Math.round(d.probAnyProfit * 100) + '%', '#22c55e', 'At expiration');
   if (d.probTouchShort != null) probTiles += mini('Touch short', Math.round(d.probTouchShort * 100) + '%', '#f59e0b', 'Before expiration');
   if (d.probTouchPutShort != null || d.probTouchCallShort != null) {
     probTiles += mini('Touch shorts', (d.probTouchPutShort != null ? 'P ' + Math.round(d.probTouchPutShort * 100) + '%' : '') + (d.probTouchCallShort != null ? ' C ' + Math.round(d.probTouchCallShort * 100) + '%' : ''), '#f59e0b', 'Before expiration');
@@ -479,7 +546,7 @@ function renderTradeContext(d) {
     '<div style="font-size:10px;color:var(--text3);font-weight:600;text-transform:uppercase;letter-spacing:.5px;margin-bottom:10px">Trade Context</div>' +
     '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:8px;margin-bottom:10px">' +
       (d.em != null ? mini('Expected move', '&plusmn;$' + d.em, '#f59e0b', 'One-volatility move by expiration') : '') +
-      (d.dailyDecay != null ? mini('Est daily decay', '~$' + (d.dailyDecay * 100).toFixed(2), '#f59e0b', 'Approx option value decay per day') : '') +
+      (d.dailyDecay != null || d.dailyThetaDollars != null ? mini('Est daily decay', '~$' + (d.dailyThetaDollars != null ? safeNum(d.dailyThetaDollars).toFixed(2) : (d.dailyDecay * 100).toFixed(2)), '#f59e0b', 'Approx option value decay per day') : '') +
       probTiles +
       (d.exitSignal ? mini('Exit trigger', '$' + d.exitSignal, '#fca5a5', 'Stock price break level') : '') +
     '</div>' +
@@ -516,53 +583,71 @@ function renderAnalysisResult(d) {
       '<div style="font-size:11px;color:var(--text2);margin-top:4px;line-height:1.6">' +
         reasons.map(function(r) {
           var ic  = issues.find(function(i) { return i.msg === r; });
-          var col = ic ? (ic.level === 'critical' ? '#ef4444' : '#f59e0b') : '#22c55e';
+          var col = ic ? (ic.level === 'critical' ? '#ef4444' : ic.level === 'note' ? 'var(--text2)' : '#f59e0b') : '#22c55e';
           return '<span style="color:' + col + '">' + r + '</span>';
         }).join('<br>') +
       '</div>' +
-      (d.lastDate ? '<div style="font-size:9px;color:var(--text3);margin-top:4px">Price as of ' + d.lastDate + '</div>' : '') +
+      (fmtAsOf(d.lastDate) ? '<div style="font-size:9px;color:var(--text3);margin-top:4px">Quote as of ' + fmtAsOf(d.lastDate) + '</div>' : '') +
     '</div>' +
   '</div>';
+
+  if (d.structureWarning) {
+    html += '<div style="margin:0 12px 10px;padding:10px 12px;background:var(--yellow-dim);border:1px solid rgba(245,158,11,.28);border-radius:9px;color:var(--yellow);font-size:11px;line-height:1.5">' +
+      esc(d.structureWarning) +
+    '</div>';
+  }
   html += renderGreekBox(d);
 
   // ── Metrics grid ─────────────────────────────────────────────────────────
   var metrics = [];
   var sg = d.strategyGroup || '';
 
-  metrics.push(mc2('LIVE PRICE', d.price ? '$' + d.price : 'N/A', 'var(--text)'));
+  if (!isSpreadGroup(sg)) {
+    metrics.push(mc2('LIVE PRICE', d.price ? '$' + safeNum(d.price).toFixed(2) : 'N/A', 'var(--text)'));
+  }
 
   if (sg === 'credit_spread' || sg === 'csp' || sg === 'covered_call') {
     if (d.cushionPct != null)   metrics.push(mc2('CUSHION',      d.cushionPct + '%',              cushC(d.cushionPct)));
-    if (d.breakeven != null)    metrics.push(mc2('BREAKEVEN',    '$' + d.breakeven,               'var(--text)'));
+    if (sg !== 'credit_spread' && d.breakeven != null) metrics.push(mc2('BREAKEVEN', '$' + d.breakeven, 'var(--text)'));
     if (d.crWidthPct != null)   metrics.push(mc2('CR/WIDTH',     d.crWidthPct + '%',              d.crWidthPct >= prefs.creditWidthMin ? '#22c55e' : '#f59e0b'));
-    if (d.maxProfit != null)    metrics.push(mc2('MAX PROFIT',   '$' + d.maxProfit.toFixed(0),    '#22c55e'));
-    if (d.maxLoss != null)      metrics.push(mc2('MAX LOSS',     '$' + d.maxLoss.toFixed(0),      '#ef4444'));
+    if (d.maxProfit != null || d.maxProfitUnlimited) metrics.push(mc2('MAX PROFIT', fmtRiskMoney(d.maxProfit, d.maxProfitUnlimited), '#22c55e'));
+    if (d.maxLoss != null || d.maxLossUnlimited)     metrics.push(mc2('MAX LOSS',   fmtRiskMoney(d.maxLoss, d.maxLossUnlimited),     '#ef4444'));
   }
   if (sg === 'iron_condor' || sg === 'iron_butterfly') {
     if (d.putCushionPct != null)  metrics.push(mc2('PUT CUSHION',     d.putCushionPct + '%',           cushC(d.putCushionPct)));
     if (d.callCushionPct != null) metrics.push(mc2('CALL CUSHION',    d.callCushionPct + '%',          cushC(d.callCushionPct)));
     if (d.putBreakeven != null)   metrics.push(mc2('PUT BE',          '$' + d.putBreakeven,            'var(--text)'));
     if (d.callBreakeven != null)  metrics.push(mc2('CALL BE',         '$' + d.callBreakeven,           'var(--text)'));
-    if (d.maxProfit != null)      metrics.push(mc2('MAX PROFIT',      '$' + d.maxProfit.toFixed(0),    '#22c55e'));
-    if (d.maxLoss != null)        metrics.push(mc2('MAX LOSS',        '$' + d.maxLoss.toFixed(0),      '#ef4444'));
+    if (d.maxProfit != null || d.maxProfitUnlimited) metrics.push(mc2('MAX PROFIT', fmtRiskMoney(d.maxProfit, d.maxProfitUnlimited), '#22c55e'));
+    if (d.maxLoss != null || d.maxLossUnlimited)     metrics.push(mc2('MAX LOSS',   fmtRiskMoney(d.maxLoss, d.maxLossUnlimited),     '#ef4444'));
   }
   if (sg === 'bwb' || sg === 'butterfly' || sg === 'ratio_spread') {
     if (d.lowerBE != null)      metrics.push(mc2('LOWER BE',    '$' + d.lowerBE,              'var(--text)'));
     if (d.upperBE != null)      metrics.push(mc2('UPPER BE',    '$' + d.upperBE,              'var(--text)'));
-    if (d.maxProfit != null)    metrics.push(mc2('MAX PROFIT',  '$' + d.maxProfit.toFixed(0), '#22c55e'));
-    if (d.maxLoss != null)      metrics.push(mc2('MAX LOSS',    '$' + d.maxLoss.toFixed(0),   '#ef4444'));
+    if (d.maxProfit != null || d.maxProfitUnlimited) metrics.push(mc2('MAX PROFIT', fmtRiskMoney(d.maxProfit, d.maxProfitUnlimited), '#22c55e'));
+    if (d.maxLoss != null || d.maxLossUnlimited)     metrics.push(mc2('MAX LOSS',   fmtRiskMoney(d.maxLoss, d.maxLossUnlimited),     '#ef4444'));
+    if (d.openingCredit != null) metrics.push(mc2('OPEN CREDIT', '$' + d.openingCredit.toFixed(0), '#22c55e'));
+    if (d.profitWindowUpside != null) metrics.push(mc2('WINDOW UPSIDE', '$' + d.profitWindowUpside.toFixed(0), d.profitWindowUpside >= 0 ? '#22c55e' : '#ef4444'));
+    if (d.wingRatioLabel != null) metrics.push(mc2('WING RATIO', d.wingRatioLabel, 'var(--text)'));
     if (d.crRatio != null)      metrics.push(mc2('CR/RISK',     d.crRatio + '%',              d.crRatio >= 20 ? '#22c55e' : d.crRatio >= 12 ? '#f59e0b' : '#ef4444'));
+    if (d.creditCapturePct != null) metrics.push(mc2('CREDIT CAPTURE', d.creditCapturePct + '%', d.creditCapturePct >= 60 ? '#22c55e' : d.creditCapturePct >= 35 ? '#f59e0b' : '#ef4444'));
   }
   if (sg === 'put_debit_spread' || sg === 'call_debit_spread') {
-    if (d.breakeven != null)    metrics.push(mc2('BREAKEVEN',   '$' + d.breakeven,            'var(--text)'));
     if (d.movePct != null)      metrics.push(mc2('MOVE NEEDED', d.movePct + '%',              d.movePct < 5 ? '#22c55e' : d.movePct < 10 ? '#f59e0b' : '#ef4444'));
-    if (d.maxProfit != null)    metrics.push(mc2('MAX PROFIT',  '$' + d.maxProfit.toFixed(0), '#22c55e'));
-    if (d.maxLoss != null)      metrics.push(mc2('MAX LOSS',    '$' + d.maxLoss.toFixed(0),   '#ef4444'));
+    if (d.maxProfit != null || d.maxProfitUnlimited) metrics.push(mc2('MAX PROFIT', fmtRiskMoney(d.maxProfit, d.maxProfitUnlimited), '#22c55e'));
+    if (d.maxLoss != null || d.maxLossUnlimited)     metrics.push(mc2('MAX LOSS',   fmtRiskMoney(d.maxLoss, d.maxLossUnlimited),     '#ef4444'));
     if (d.riskReward != null)   metrics.push(mc2('RISK/REWARD', d.riskReward + ':1',          d.riskReward < 1 ? '#22c55e' : d.riskReward < 2 ? '#f59e0b' : '#ef4444'));
   }
   if (sg === 'long_call' || sg === 'long_put') {
     if (d.breakeven != null)    metrics.push(mc2('BREAKEVEN',     '$' + d.breakeven,                         'var(--text)'));
-    if (d.maxLoss != null)      metrics.push(mc2('MAX LOSS',      '$' + d.maxLoss.toFixed(0),               '#ef4444'));
+    if (d.maxProfit != null || d.maxProfitUnlimited) metrics.push(mc2('MAX PROFIT', fmtRiskMoney(d.maxProfit, d.maxProfitUnlimited), '#22c55e'));
+    if (d.maxLoss != null || d.maxLossUnlimited)     metrics.push(mc2('MAX LOSS',   fmtRiskMoney(d.maxLoss, d.maxLossUnlimited),     '#ef4444'));
+  }
+  if (sg === 'custom') {
+    if (d.breakeven != null) metrics.push(mc2('BREAKEVEN', '$' + d.breakeven, 'var(--text)'));
+    if (d.maxProfit != null || d.maxProfitUnlimited) metrics.push(mc2('MAX PROFIT', fmtRiskMoney(d.maxProfit, d.maxProfitUnlimited), '#22c55e'));
+    if (d.maxLoss != null || d.maxLossUnlimited)     metrics.push(mc2('MAX LOSS',   fmtRiskMoney(d.maxLoss, d.maxLossUnlimited),     '#ef4444'));
+    if (d.collateral != null) metrics.push(mc2('RISK', '$' + safeNum(d.collateral).toFixed(0), '#ef4444'));
   }
 
   var earnCol = d.earningsRisk ? '#ef4444' : '#22c55e';
@@ -640,22 +725,22 @@ function renderAnalysisResult(d) {
   if ((sg === 'long_call' || sg === 'long_put') && d.profitTargets && d.profitTargets.length > 0) {
     html += '<div class="card">' +
       '<div style="font-size:10px;color:var(--text3);font-weight:600;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">Realistic Profit Targets</div>' +
-      '<div style="font-size:10px;color:var(--yellow);margin-bottom:10px">&#9888; Theoretical max profit is misleading. Here is what is actually realistic:</div>';
+      '<div style="font-size:10px;color:var(--yellow);margin-bottom:8px">Small odds are normal for long options; touch odds and expiration odds answer different questions.</div>' +
+      '<div style="display:grid;gap:4px">';
     d.profitTargets.forEach(function(t) {
       var probPct = t.prob != null ? Math.round(t.prob * 100) : 0;
-      var moveDir = sg === 'long_call' ? '+' : '-';
-      html += '<div style="display:flex;justify-content:space-between;align-items:center;padding:7px 0;border-bottom:1px solid var(--border)">' +
-        '<div>' +
-          '<span style="font-size:12px;font-weight:600;color:var(--text)">' + moveDir + (t.movePct * 100).toFixed(0) + '% move</span>' +
-          '<span style="font-size:10px;color:var(--text3);margin-left:8px">stock at $' + t.targetPrice + '</span>' +
+      var touchPct = t.probTouch != null ? Math.round(t.probTouch * 100) : null;
+      var profitDollars = safeNum(t.profitDollars != null ? t.profitDollars : t.profit * 100);
+      html += '<div style="display:grid;grid-template-columns:1fr auto auto;gap:10px;align-items:center;padding:7px 9px;background:var(--surface2);border:1px solid var(--border);border-radius:7px">' +
+        '<div style="min-width:0">' +
+          '<span style="font-size:11px;font-weight:700;color:var(--text)">' + (t.label || ('+$' + profitDollars.toFixed(0))) + '</span>' +
+          '<span style="font-size:10px;color:var(--text3);margin-left:8px">$' + t.targetPrice + '</span>' +
         '</div>' +
-        '<div style="text-align:right">' +
-          '<div style="font-size:12px;font-weight:700;color:#22c55e">+$' + safeNum(t.profitDollars != null ? t.profitDollars : t.profit * 100).toFixed(0) + '</div>' +
-          '<div style="font-size:10px;color:var(--text3)">Exp ' + probPct + '%</div>' +
-          (t.probTouch != null ? '<div style="font-size:10px;color:var(--yellow)">Touch ' + Math.round(t.probTouch * 100) + '%</div>' : '') +
-        '</div>' +
+        '<div style="font-size:11px;font-family:var(--mono);color:' + (profitDollars > 0 ? '#22c55e' : 'var(--text2)') + '">' + (profitDollars > 0 ? '+$' : '$') + profitDollars.toFixed(0) + '</div>' +
+        '<div style="font-size:10px;font-family:var(--mono);color:var(--text3);text-align:right">Exp ' + probPct + '%' + (touchPct != null ? ' / Touch ' + touchPct + '%' : '') + '</div>' +
       '</div>';
     });
+    html += '</div>';
     if (d.framingNote) {
       html += '<div style="font-size:10px;color:var(--text3);margin-top:10px;line-height:1.5">' + d.framingNote + '</div>';
     }
