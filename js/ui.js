@@ -15,6 +15,7 @@ function esc(v) {
 }
 
 function isAdminUser() {
+  // This only hides/shows the UI preview. It is not a security boundary.
   var email = currentUser && currentUser.email ? currentUser.email.toLowerCase() : '';
   return ADMIN_EMAILS.map(function(e) { return e.toLowerCase(); }).indexOf(email) !== -1;
 }

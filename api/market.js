@@ -5,7 +5,7 @@
 // Cache TTL: 4 hours. Polygon is only called if cache is stale.
 // =============================================================================
 
-import { applyApiHeaders, handleOptions } from './_security.js';
+import { applyApiHeaders, checkRateLimit, handleOptions } from './_security.js';
 
 const POLYGON_KEY  = process.env.POLYGON_KEY;
 const SUPABASE_URL = process.env.SUPABASE_URL;
@@ -169,6 +169,7 @@ export default async function handler(req, res) {
   if (handleOptions(req, res, ['GET'])) return;
   applyApiHeaders(req, res, ['GET','OPTIONS']);
   if (req.method !== 'GET')    return res.status(405).json({ error: 'Method not allowed' });
+  if (!checkRateLimit(req, res, { key: 'market', limit: 40 })) return;
 
   const force = req.query.force === 'true';
 

@@ -5,7 +5,7 @@
 // =============================================================================
 
 import { fetchAllData } from './dataFetch.js';
-import { applyApiHeaders, cleanTicker, handleOptions } from '../_security.js';
+import { applyApiHeaders, checkRateLimit, cleanTicker, handleOptions } from '../_security.js';
 import {
   analyzeCreditSpread,
   analyzeIronCondor,
@@ -14,6 +14,7 @@ import {
   analyzeButterflyBWB,
   analyzeDebitSpread,
   analyzeLongOption,
+  analyzeCustomPayoff,
 } from './strategies.js';
 
 // ---------------------------------------------------------------------------
@@ -46,9 +47,15 @@ const STRATEGY_GROUPS = {
   'LONG PUT':           'long_option',
   'LONG CALL':          'long_option',
 
-  // Custom -- attempt generic credit spread logic
-  'CUSTOM':             'credit_spread',
+  'CUSTOM':             'custom',
 };
+
+const VERTICAL_STRATEGIES = [
+  'PUT CREDIT SPREAD',
+  'PUT DEBIT SPREAD',
+  'CALL CREDIT SPREAD',
+  'CALL DEBIT SPREAD',
+];
 
 // ---------------------------------------------------------------------------
 // Date normalization -- accepts M/D/YY, MM/DD/YYYY, YYYY-MM-DD
@@ -85,6 +92,92 @@ function isCreditStrategy(strategy) {
   ].includes(strategy);
 }
 
+function legQty(leg) {
+  return Math.max(1, Number.parseFloat(leg?.n || leg?.qty || 1) || 1);
+}
+
+function normalizedLegs(legs = []) {
+  return legs.map(leg => ({
+    a: String(leg.a || leg.action || '').toUpperCase(),
+    t: String(leg.t || leg.type || '').toUpperCase(),
+    n: legQty(leg),
+    s: Number.parseFloat(leg.s || leg.strike),
+  })).filter(leg =>
+    (leg.a === 'BUY' || leg.a === 'SELL') &&
+    (leg.t === 'PUT' || leg.t === 'CALL') &&
+    Number.isFinite(leg.s)
+  );
+}
+
+function detectStrategyFromLegs(legs = []) {
+  const clean = normalizedLegs(legs);
+  if (clean.length === 1) {
+    const only = clean[0];
+    if (only.a === 'BUY' && only.t === 'CALL') return { strategy: 'LONG CALL', confidence: 'high' };
+    if (only.a === 'BUY' && only.t === 'PUT') return { strategy: 'LONG PUT', confidence: 'high' };
+    if (only.a === 'SELL' && only.t === 'PUT') return { strategy: 'CASH SECURED PUT', confidence: 'medium' };
+    if (only.a === 'SELL' && only.t === 'CALL') return { strategy: 'COVERED CALL', confidence: 'medium' };
+  }
+
+  if (clean.length === 2 && clean.every(l => l.n === clean[0].n)) {
+    const types = [...new Set(clean.map(l => l.t))];
+    const buy = clean.find(l => l.a === 'BUY');
+    const sell = clean.find(l => l.a === 'SELL');
+    if (types.length === 1 && buy && sell && buy.s !== sell.s) {
+      if (types[0] === 'PUT') {
+        return {
+          strategy: sell.s > buy.s ? 'PUT CREDIT SPREAD' : 'PUT DEBIT SPREAD',
+          confidence: 'high',
+        };
+      }
+      if (types[0] === 'CALL') {
+        return {
+          strategy: sell.s < buy.s ? 'CALL CREDIT SPREAD' : 'CALL DEBIT SPREAD',
+          confidence: 'high',
+        };
+      }
+    }
+  }
+
+  if (clean.length === 4) {
+    const puts = clean.filter(l => l.t === 'PUT');
+    const calls = clean.filter(l => l.t === 'CALL');
+    const buyPut = puts.find(l => l.a === 'BUY');
+    const sellPut = puts.find(l => l.a === 'SELL');
+    const sellCall = calls.find(l => l.a === 'SELL');
+    const buyCall = calls.find(l => l.a === 'BUY');
+    if (puts.length === 2 && calls.length === 2 && buyPut && sellPut && sellCall && buyCall) {
+      if (buyPut.s < sellPut.s && sellPut.s < sellCall.s && sellCall.s < buyCall.s) {
+        return { strategy: 'IRON CONDOR', confidence: 'high' };
+      }
+      return {
+        error: 'Iron condor legs should be ordered: long put < short put < short call < long call.',
+      };
+    }
+  }
+
+  return { strategy: null, confidence: 'none' };
+}
+
+function resolveStrategy(selectedStrategy, legs) {
+  const detected = detectStrategyFromLegs(legs);
+  if (detected.error && selectedStrategy === 'IRON CONDOR') return detected;
+  if (!detected.strategy) return { strategy: selectedStrategy, detected };
+
+  const selectedIsVertical = VERTICAL_STRATEGIES.includes(selectedStrategy);
+  const detectedIsVertical = VERTICAL_STRATEGIES.includes(detected.strategy);
+  if (selectedIsVertical && detectedIsVertical && selectedStrategy !== detected.strategy) {
+    return {
+      strategy: detected.strategy,
+      detected,
+      warning: `You selected ${selectedStrategy}, but these legs look like ${detected.strategy}. Analysis has been adjusted.`,
+    };
+  }
+
+  if (selectedStrategy === 'CUSTOM') return { strategy: selectedStrategy, detected };
+  return { strategy: selectedStrategy, detected };
+}
+
 // ---------------------------------------------------------------------------
 // Handler
 // ---------------------------------------------------------------------------
@@ -92,6 +185,7 @@ export default async function handler(req, res) {
   if (handleOptions(req, res, ['POST'])) return;
   applyApiHeaders(req, res, ['POST','OPTIONS']);
   if (req.method !== 'POST')   return res.status(405).json({ error: 'Method not allowed' });
+  if (!checkRateLimit(req, res, { key: 'analyze', limit: 30 })) return;
 
   // ── Input validation ────────────────────────────────────────────────────
   const { ticker, legs, expDate, credit, entryType, strategy, prefs } = req.body || {};
@@ -110,10 +204,15 @@ export default async function handler(req, res) {
   if (!tickerUpper) {
     return res.status(400).json({ ok: false, error: 'Enter a valid ticker symbol' });
   }
-  const group = STRATEGY_GROUPS[strategy];
+  const strategyResolution = resolveStrategy(strategy, legs);
+  if (strategyResolution.error) {
+    return res.status(400).json({ ok: false, error: strategyResolution.error });
+  }
+  const effectiveStrategy = strategyResolution.strategy;
+  const group = STRATEGY_GROUPS[effectiveStrategy];
 
   if (!group) {
-    return res.status(400).json({ ok: false, error: `Unknown strategy: ${strategy}` });
+    return res.status(400).json({ ok: false, error: `Unknown strategy: ${effectiveStrategy}` });
   }
 
   // ── Date parsing ────────────────────────────────────────────────────────
@@ -176,7 +275,7 @@ export default async function handler(req, res) {
       case 'butterfly_bwb':
         result = analyzeButterflyBWB(
           data, legs, expDateObj, dte, credit, prefs,
-          entryType ? entryType === 'credit' : isCreditStrategy(strategy)
+          entryType ? entryType === 'credit' : isCreditStrategy(effectiveStrategy)
         );
         break;
 
@@ -186,6 +285,10 @@ export default async function handler(req, res) {
 
       case 'long_option':
         result = analyzeLongOption(data, legs, expDateObj, dte, credit, prefs);
+        break;
+
+      case 'custom':
+        result = analyzeCustomPayoff(data, legs, expDateObj, dte, credit, prefs, entryType !== 'debit');
         break;
 
       default:
@@ -205,7 +308,12 @@ export default async function handler(req, res) {
   return res.status(200).json({
     ok: true,
     ticker:      tickerUpper,
-    strategy,
+    strategy: effectiveStrategy,
+    entryType: result.entryType || (group === 'debit_spread' || group === 'long_option' ? 'debit' : group === 'custom' ? entryType || 'credit' : 'credit'),
+    selectedStrategy: strategy,
+    strategyAdjusted: effectiveStrategy !== strategy,
+    structureWarning: strategyResolution.warning || null,
+    detectedStrategy: strategyResolution.detected?.strategy || null,
     strategyGroup: result.strategyGroup,
     dte,
     expDate:     expFormatted,

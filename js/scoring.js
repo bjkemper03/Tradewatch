@@ -32,9 +32,11 @@ function scoreStructure(above50, above200, qqqAbove50, rspDiff) {
   if (above50 === true) s += 15; else if (above50 === false) s -= 18;
   if (above200 === true) s += 10; else if (above200 === false) s -= 10;
   if (qqqAbove50 === true) s += 10; else if (qqqAbove50 === false) s -= 8;
-  if      (rspDiff >  0.5) s += 10;
-  else if (rspDiff < -1.5) s -= 15;
-  else if (rspDiff < -0.5) s -= 5;
+  if (rspDiff !== null && rspDiff !== undefined) {
+    if      (rspDiff >  0.5) s += 10;
+    else if (rspDiff < -1.5) s -= 15;
+    else if (rspDiff < -0.5) s -= 5;
+  }
   return Math.max(0, Math.min(100, s));
 }
 
@@ -70,8 +72,8 @@ function getSignal(vixScore, structScore, sentScore) {
 // ---------------------------------------------------------------------------
 function buildSignalResult(mkt) {
   const { vix, fg, spy, qqq, hyg, rsp } = mkt;
-  const creditChg   = (hyg && hyg.perf5) ? -hyg.perf5 * 2 : 0;
-  const rspDiff     = (rsp && spy) ? parseFloat((rsp.perf5 - spy.perf5).toFixed(2)) : 0;
+  const creditChg   = (hyg && hyg.perf5 != null) ? -hyg.perf5 * 2 : null;
+  const rspDiff     = (rsp && spy && rsp.perf5 != null && spy.perf5 != null) ? parseFloat((rsp.perf5 - spy.perf5).toFixed(2)) : null;
   const vixScore    = scoreVIX(vix && vix.level, (vix && vix.chg) || 0);
   const structScore = scoreStructure(
     spy && spy.above50,
@@ -79,7 +81,7 @@ function buildSignalResult(mkt) {
     qqq && qqq.above50,
     rspDiff
   );
-  const sentScore = scoreSentiment(fg, creditChg);
+  const sentScore = scoreSentiment(fg, creditChg || 0);
   const composite = Math.round(vixScore * 0.40 + structScore * 0.35 + sentScore * 0.25);
   const signal    = getSignal(vixScore, structScore, sentScore);
   return { vixScore, structScore, sentScore, composite, signal, creditChg, rspDiff, creditLabel: 'Credit proxy' };

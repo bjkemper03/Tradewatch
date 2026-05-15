@@ -169,8 +169,8 @@ async function runAnalysis() {
       price:         d.price,
       lastDate:      d.lastDate,
       credit:        credit,
-      entryType:     entryType,
-      collateral:    d.collateral != null ? d.collateral : calcCollateral(azStrat, azLegData, credit, entryType),
+      entryType:     d.entryType || entryType,
+      collateral:    d.collateral != null ? d.collateral : d.maxLoss,
       breakeven:     d.breakeven     || null,
       cushionPct:    d.cushionPct    || null,
       absDelta:      d.absDelta      || null,
@@ -187,6 +187,8 @@ async function runAnalysis() {
       probWorthless: d.probWorthless || null,
       profitTargets: d.profitTargets || null,
       modelNotes:    d.modelNotes    || [],
+      structureWarning: d.structureWarning || null,
+      selectedStrategy: d.selectedStrategy || azStrat,
       notes:         $('az-ctx') ? $('az-ctx').value.trim() : '',
       issues:        d.issues        || []
     };
@@ -577,6 +579,12 @@ function renderAnalysisResult(d) {
       (fmtAsOf(d.lastDate) ? '<div style="font-size:9px;color:var(--text3);margin-top:4px">Quote as of ' + fmtAsOf(d.lastDate) + '</div>' : '') +
     '</div>' +
   '</div>';
+
+  if (d.structureWarning) {
+    html += '<div style="margin:0 12px 10px;padding:10px 12px;background:var(--yellow-dim);border:1px solid rgba(245,158,11,.28);border-radius:9px;color:var(--yellow);font-size:11px;line-height:1.5">' +
+      esc(d.structureWarning) +
+    '</div>';
+  }
   html += renderGreekBox(d);
 
   // ── Metrics grid ─────────────────────────────────────────────────────────
@@ -622,6 +630,12 @@ function renderAnalysisResult(d) {
     if (d.breakeven != null)    metrics.push(mc2('BREAKEVEN',     '$' + d.breakeven,                         'var(--text)'));
     if (d.maxProfit != null || d.maxProfitUnlimited) metrics.push(mc2('MAX PROFIT', fmtRiskMoney(d.maxProfit, d.maxProfitUnlimited), '#22c55e'));
     if (d.maxLoss != null || d.maxLossUnlimited)     metrics.push(mc2('MAX LOSS',   fmtRiskMoney(d.maxLoss, d.maxLossUnlimited),     '#ef4444'));
+  }
+  if (sg === 'custom') {
+    if (d.breakeven != null) metrics.push(mc2('BREAKEVEN', '$' + d.breakeven, 'var(--text)'));
+    if (d.maxProfit != null || d.maxProfitUnlimited) metrics.push(mc2('MAX PROFIT', fmtRiskMoney(d.maxProfit, d.maxProfitUnlimited), '#22c55e'));
+    if (d.maxLoss != null || d.maxLossUnlimited)     metrics.push(mc2('MAX LOSS',   fmtRiskMoney(d.maxLoss, d.maxLossUnlimited),     '#ef4444'));
+    if (d.collateral != null) metrics.push(mc2('RISK', '$' + safeNum(d.collateral).toFixed(0), '#ef4444'));
   }
 
   var earnCol = d.earningsRisk ? '#ef4444' : '#22c55e';

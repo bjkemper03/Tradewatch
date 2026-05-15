@@ -23,7 +23,6 @@ function applyLayout() {
 }
 
 function showPage(name) {
-  if (isAdminUser()) recordAdminEvent('page_view', { page: name });
   curPage = name;
   PAGES.forEach(function(p) {
     var el = $('page-' + p);

@@ -83,8 +83,8 @@ function renderOverview() {
         quickTile('SPY 50MA',  (spy && spy.above50 !== undefined) ? (spy.above50 ? 'Above' : 'Below') : 'N/A', (spy && spy.above50 !== undefined) ? (spy.above50 ? 'var(--green)' : 'var(--red)') : 'var(--text3)') +
         quickTile('QQQ 50MA',  (qqq && qqq.above50 !== undefined) ? (qqq.above50 ? 'Above' : 'Below') : 'N/A', (qqq && qqq.above50 !== undefined) ? (qqq.above50 ? 'var(--green)' : 'var(--red)') : 'var(--text3)') +
         quickTile('RSP/SPY',
-          rspDiff ? (rspDiff > 0 ? '+' : '') + rspDiff + '%' : 'N/A',
-          rspDiff > 0.5 ? 'var(--green)' : rspDiff < -1 ? 'var(--red)' : 'var(--yellow)') +
+          rspDiff != null ? (rspDiff > 0 ? '+' : '') + rspDiff + '%' : 'N/A',
+          rspDiff == null ? 'var(--text3)' : rspDiff > 0.5 ? 'var(--green)' : rspDiff < -1 ? 'var(--red)' : 'var(--yellow)') +
       '</div>' +
 
       // ── Guidance ──────────────────────────────────────────────────────────

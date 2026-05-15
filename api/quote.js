@@ -4,7 +4,7 @@
 // Primary: Tradier (real-time)  |  Fallback: Polygon (15-min delayed on free tier)
 // =============================================================================
 
-import { applyApiHeaders, cleanTicker, handleOptions } from './_security.js';
+import { applyApiHeaders, checkRateLimit, cleanTicker, handleOptions } from './_security.js';
 
 const POLYGON_KEY = process.env.POLYGON_KEY;
 const TRADIER_KEY = process.env.TRADIER_KEY;
@@ -59,6 +59,7 @@ export default async function handler(req, res) {
   if (handleOptions(req, res, ['GET'])) return;
   applyApiHeaders(req, res, ['GET','OPTIONS']);
   if (req.method !== 'GET') return res.status(405).json({ error: 'Method not allowed' });
+  if (!checkRateLimit(req, res, { key: 'quote', limit: 80 })) return;
 
   const ticker = cleanTicker(req.query.ticker);
   if (!ticker) return res.status(400).json({ error: 'Enter a valid ticker symbol' });

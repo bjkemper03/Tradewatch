@@ -95,10 +95,14 @@ function checkEarningsRisk(earnings, expDateObj) {
 
 // Signal from prefs thresholds
 function getSignal(issues) {
-  const critical = issues.filter(i => i.level === 'critical');
-  const warnings = issues.filter(i => i.level === 'warning');
-  if (critical.length > 0) return 'NO-GO';
-  if (warnings.length > 1) return 'CAUTION';
+  const score = issues.reduce((sum, issue) => {
+    if (issue.level === 'critical') return sum + (issue.weight || 5);
+    if (issue.level === 'warning') return sum + (issue.weight || 2);
+    return sum + (issue.weight || 1);
+  }, 0);
+  if (issues.some(i => i.level === 'critical' && (i.weight || 5) >= 5)) return 'NO-GO';
+  if (score >= 5) return 'NO-GO';
+  if (score >= 2) return 'CAUTION';
   return 'GO';
 }
 
@@ -118,10 +122,12 @@ function modelNotes(data, opts = {}) {
 }
 
 function payoffSummary(legs, netPremiumPerShare, price, labels = [], opts = {}) {
+  const qtys = (legs || []).map(l => Math.max(1, safeNum(l.n || l.qty || 1, 1)));
+  const sameQty = qtys.length > 0 && qtys.every(q => Math.abs(q - qtys[0]) < 0.0001);
   return analyzePayoff({
     legs,
     netPremiumPerShare,
-    premiumContracts: opts.premiumContracts || 1,
+    premiumContracts: opts.premiumContracts || (sameQty ? qtys[0] : 1),
     underlyingShares: opts.underlyingShares || 0,
     underlyingBasis: opts.underlyingBasis || 0,
   }, {
@@ -139,6 +145,16 @@ function collateralFromPayoff(payoff, fallback = 0) {
   if (!payoff) return fallback;
   if (payoff.maxLossUnlimited) return null;
   return payoff.collateral ?? payoff.maxLoss ?? fallback;
+}
+
+function riskFieldsFromPayoff(payoff) {
+  return {
+    maxProfit: payoff.maxProfit,
+    maxLoss: payoff.maxLoss,
+    collateral: collateralFromPayoff(payoff),
+    maxProfitUnlimited: payoff.maxProfitUnlimited,
+    maxLossUnlimited: payoff.maxLossUnlimited,
+  };
 }
 
 function sameOptionType(legs) {
@@ -299,14 +315,15 @@ export function analyzeCreditSpread(data, legs, expDateObj, dte, credit, prefs) 
   const crwMin  = prefs?.creditWidthMin || 8;
   const deltaMax = prefs?.deltaHigh || 0.30;
 
-  if (earningsCheck.risk)                             issues.push({ level:'critical', msg:`Earnings ${earningsCheck.date} falls within expiration` });
-  if (cushionPct < cushMin)                           issues.push({ level:'critical', msg:`${cushionPct}% cushion below your ${cushMin}% minimum` });
-  if (absDelta && absDelta > deltaMax)                issues.push({ level:'warning',  msg:`Delta ${absDelta.toFixed(3)} above your ${deltaMax} target` });
+  if (payoff.maxLossUnlimited)                        issues.push({ level:'critical', weight:6, msg:'Undefined/naked risk detected -- not beginner-safe' });
+  if (earningsCheck.risk)                             issues.push({ level:'critical', weight:5, msg:`Earnings ${earningsCheck.date} falls within expiration` });
+  if (cushionPct < cushMin)                           issues.push({ level:'critical', weight:5, msg:`${cushionPct}% cushion below your ${cushMin}% minimum` });
+  if (absDelta && absDelta > deltaMax)                issues.push({ level:'warning', weight:3, msg:`Delta ${absDelta.toFixed(3)} above your ${deltaMax} target` });
   if (crWidthPct < crwMin)                            issues.push({ level:'warning',  msg:`Credit is only ${crWidthPct}% of spread width -- low return on risk` });
   if (dte < dteMin)                                   issues.push({ level:'warning',  msg:`${dte} DTE below your ${dteMin} minimum` });
   if (dte > dteMax)                                   issues.push({ level:'warning',  msg:`${dte} DTE above your ${dteMax} maximum` });
   if (isPut && nearestSupport && shortStrike > nearestSupport) issues.push({ level:'warning', msg:`Short put $${shortStrike} sits above nearest support $${nearestSupport} -- support is not protecting the strike` });
-  if (!strikeOutsideEM && em)                         issues.push({ level:'warning',  msg:`Short strike inside 1SD expected move ($${em})` });
+  if (!strikeOutsideEM && em)                         issues.push({ level:'warning', weight:3, msg:`Short strike inside 1SD expected move ($${em})` });
 
   return {
     strategyGroup: 'credit_spread',
@@ -425,12 +442,13 @@ export function analyzeIronCondor(data, legs, expDateObj, dte, credit, prefs) {
   const cushMin  = prefs?.cushionMin || 5;
   const deltaMax = prefs?.deltaHigh  || 0.30;
 
-  if (earningsCheck.risk)                  issues.push({ level:'critical', msg:`Earnings ${earningsCheck.date} within expiration` });
-  if (minCushionPct < cushMin)             issues.push({ level:'critical', msg:`Tight cushion: put side ${putCushionPct}%, call side ${callCushionPct}%` });
-  if (putDelta > deltaMax)                 issues.push({ level:'warning',  msg:`Put delta ${putDelta.toFixed(3)} above ${deltaMax} target` });
-  if (callDelta > deltaMax)                issues.push({ level:'warning',  msg:`Call delta ${callDelta.toFixed(3)} above ${deltaMax} target` });
+  if (payoff.maxLossUnlimited)             issues.push({ level:'critical', weight:6, msg:'Undefined/naked risk detected -- not beginner-safe' });
+  if (earningsCheck.risk)                  issues.push({ level:'critical', weight:5, msg:`Earnings ${earningsCheck.date} within expiration` });
+  if (minCushionPct < cushMin)             issues.push({ level:'critical', weight:5, msg:`Tight cushion: put side ${putCushionPct}%, call side ${callCushionPct}%` });
+  if (putDelta > deltaMax)                 issues.push({ level:'warning', weight:3, msg:`Put delta ${putDelta.toFixed(3)} above ${deltaMax} target` });
+  if (callDelta > deltaMax)                issues.push({ level:'warning', weight:3, msg:`Call delta ${callDelta.toFixed(3)} above ${deltaMax} target` });
   if (isIronButterfly)                     issues.push({ level:'warning',  msg:'Iron butterfly -- max profit only if price pins at strike. Very tight target.' });
-  if (price < shortPut || price > shortCall) issues.push({ level:'critical', msg:'Price already outside the tent -- do not open' });
+  if (price < shortPut || price > shortCall) issues.push({ level:'critical', weight:6, msg:'Price already outside the tent -- do not open' });
 
   return {
     strategyGroup: isIronButterfly ? 'iron_butterfly' : 'iron_condor',
@@ -774,8 +792,8 @@ export function analyzeButterflyBWB(data, legs, expDateObj, dte, credit, prefs, 
   const nowPayoff = payoff.checkpoints.find(p => p.label === 'Now')?.pnl;
 
   const issues = [];
-  if (earningsCheck.risk)                issues.push({ level:'critical', msg:`Earnings ${earningsCheck.date} within expiration` });
-  if (payoff.maxLossUnlimited)          issues.push({ level:'critical', msg:'Structure has uncapped expiration loss on one side' });
+  if (earningsCheck.risk)                issues.push({ level:'critical', weight:5, msg:`Earnings ${earningsCheck.date} within expiration` });
+  if (payoff.maxLossUnlimited)          issues.push({ level:'critical', weight:6, msg:'Structure has uncapped expiration loss on one side' });
   if (nowPayoff != null && nowPayoff < 0) issues.push({ level:'warning', msg:'Price is currently outside the expiration profit zone' });
   if (crRatio && crRatio < 12)          issues.push({ level:'warning',  msg:`Low credit/risk ratio: ${crRatio}%` });
 
@@ -890,9 +908,10 @@ export function analyzeDebitSpread(data, legs, expDateObj, dte, debit, prefs) {
   const earningsCheck = checkEarningsRisk(earnings, expDateObj);
 
   const issues = [];
-  if (earningsCheck.risk)      issues.push({ level:'critical', msg:`Earnings ${earningsCheck.date} within expiration -- binary move` });
+  if (payoff.maxLossUnlimited) issues.push({ level:'critical', weight:6, msg:'Undefined/naked risk detected -- not beginner-safe' });
+  if (earningsCheck.risk)      issues.push({ level:'critical', weight:5, msg:`Earnings ${earningsCheck.date} within expiration -- binary move` });
   if (movePct > 10)            issues.push({ level:'warning',  msg:`Needs ${movePct}% move to breakeven -- aggressive target` });
-  if (riskReward && riskReward > 2) issues.push({ level:'warning', msg:`Risk/reward ${riskReward}:1 -- risking more than potential gain` });
+  if (riskReward && riskReward > 2) issues.push({ level:'warning', weight:3, msg:`Risk/reward ${riskReward}:1 -- risking more than potential gain` });
   if (probMaxLoss && probMaxLoss > 0.60) issues.push({ level:'warning', msg:`${pct(probMaxLoss)}% chance of max loss -- low probability trade` });
 
   return {
@@ -1018,6 +1037,49 @@ export function analyzeLongOption(data, legs, expDateObj, dte, premium, prefs) {
       ? `Theoretical max profit is unlimited, but realistically: a 20% move in ${dte} days has ~${pct(targetData.allTargets?.find(t=>t.movePct===0.20)?.prob || 0.05)}% probability at current volatility.`
       : `Theoretical max profit requires stock to reach $0. Realistically: a 20% drop in ${dte} days has ~${pct(targetData.allTargets?.find(t=>t.movePct===0.20)?.prob || 0.05)}% probability.`,
     modelNotes: modelNotes(data, { greeks }),
+    payoff,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// 8. CUSTOM -- generic payoff-engine analysis
+// ---------------------------------------------------------------------------
+export function analyzeCustomPayoff(data, legs, expDateObj, dte, credit, prefs, isCredit = true) {
+  const { price, hv30, supports, resistances, earnings } = data;
+  const entry = safeNum(credit);
+  const netPremiumPerShare = isCredit ? entry : -entry;
+  const payoff = payoffSummary(legs, netPremiumPerShare, price);
+  const earningsCheck = checkEarningsRisk(earnings, expDateObj);
+  const issues = [];
+
+  if (payoff.maxLossUnlimited) {
+    issues.push({ level:'critical', weight:6, msg:'Custom structure has undefined/naked risk' });
+  }
+  if (earningsCheck.risk) {
+    issues.push({ level:'critical', weight:5, msg:`Earnings ${earningsCheck.date} within expiration` });
+  }
+  if (!payoff.breakevens.length) {
+    issues.push({ level:'warning', weight:2, msg:'No breakeven found in modeled expiration range' });
+  }
+
+  return {
+    strategyGroup: 'custom',
+    signal: getSignal(issues),
+    issues,
+    price,
+    entryType: isCredit ? 'credit' : 'debit',
+    entryPremium: entry,
+    breakevens: payoff.breakevens,
+    breakeven: firstBreakeven(payoff),
+    ...riskFieldsFromPayoff(payoff),
+    vol: pct(hv30 || 0.30),
+    supports,
+    resistances,
+    earningsRisk: earningsCheck.risk,
+    earningsDate: earningsCheck.date,
+    modelNotes: modelNotes(data, {
+      structureNote: 'Custom analysis uses the generic payoff engine from the exact entered legs. Probability and strategy-specific quality checks are intentionally limited.',
+    }),
     payoff,
   };
 }
