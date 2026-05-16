@@ -296,6 +296,29 @@ function renderTopPanels(d) {
   '</div>';
 }
 
+function renderHeaderChips(d) {
+  var s = d.summary || {};
+  var dte = s.dte || { label: d.dte != null ? d.dte + ' DTE' : 'Unknown', tone: 'neutral', detail: '' };
+  var earn = s.earnings || { label: d.earningsRisk ? 'Earnings risk' : 'No earnings risk', tone: d.earningsRisk ? 'bad' : 'good', detail: d.earningsDate || 'Unknown' };
+  var liq = s.liquidity || { label: 'Unknown', grade: 'Unknown', detail: 'Check bid/ask before entry' };
+  var liqTone = liq.grade === 'Good' ? 'good' : liq.grade === 'Okay' ? 'warn' : liq.grade === 'Thin' || liq.grade === 'Poor' ? 'bad' : 'neutral';
+
+  function chip(label, value, detail, tone) {
+    return '<div class="analysis-chip">' +
+      '<div class="analysis-chip-label">' + label + '</div>' +
+      '<div class="analysis-chip-value" style="color:' + toneColor(tone) + '">' + value + '</div>' +
+      (detail ? '<div class="analysis-chip-detail">' + detail + '</div>' : '') +
+    '</div>';
+  }
+
+  var liqDetail = liq.avgBidAsk != null ? 'Bid/ask $' + liq.avgBidAsk : (liq.detail || '');
+  return '<div class="analysis-chip-row">' +
+    chip('DTE', dte.label, dte.detail, dte.tone) +
+    chip('Earnings', earn.label, earn.detail, earn.tone) +
+    chip('Liquidity', liq.label || liq.grade || 'Unknown', liqDetail, liqTone) +
+  '</div>';
+}
+
 function renderUniversalMetrics(d) {
   var u = (d.summary && d.summary.universal) || {};
   var cushion = u.cushionPct ?? d.cushionPct ?? d.minCushionPct ?? d.beCushionPct;
@@ -593,28 +616,49 @@ function renderTradeContext(d) {
 
   var primary = [];
   var width = spreadWidthFromLegs();
+  function touchCards() {
+    var cards = [];
+    if (d.probTouchShort != null) {
+      cards.push(mini('Touch short', Math.round(d.probTouchShort * 100) + '%', 'var(--yellow)', 'Before expiration'));
+    }
+    if (d.probTouchPutShort != null || d.probTouchCallShort != null) {
+      cards.push(mini('Touch shorts', (d.probTouchPutShort != null ? 'P ' + Math.round(d.probTouchPutShort * 100) + '%' : '') + (d.probTouchCallShort != null ? ' C ' + Math.round(d.probTouchCallShort * 100) + '%' : ''), 'var(--yellow)', 'Before expiration'));
+    }
+    if (d.probTouchBreakeven != null) {
+      cards.push(mini('Touch breakeven', Math.round(d.probTouchBreakeven * 100) + '%', 'var(--yellow)', 'Before expiration'));
+    }
+    if (d.probTouchLong != null) {
+      cards.push(mini('Touch long', Math.round(d.probTouchLong * 100) + '%', 'var(--text2)', 'Protection strike'));
+    }
+    return cards;
+  }
   if (sg === 'credit_spread') {
-    if (width != null) primary.push(mini('Spread width', fmtMoneyCents(width), 'var(--text)', d.crWidthPct != null ? d.crWidthPct + '% of width collected' : 'Defined-risk spread'));
-    if (d.crWidthPct != null) primary.push(mini('% of width', d.crWidthPct + '%', d.crWidthPct >= prefs.creditWidthMin ? 'var(--green)' : 'var(--yellow)', 'Credit quality check'));
+    var creditWidthSub = width != null && d.maxProfit != null
+      ? fmtMoney(d.maxProfit) + ' credit on ' + fmtMoneyCents(width) + ' width'
+      : 'Credit quality check';
+    if (d.crWidthPct != null) primary.push(mini('% of width', d.crWidthPct + '%', d.crWidthPct >= prefs.creditWidthMin ? 'var(--green)' : 'var(--yellow)', creditWidthSub));
+    primary = primary.concat(touchCards());
     if (d.riskReward != null) primary.push(mini('Risk / reward', d.riskReward + ':1', d.riskReward <= 4 ? 'var(--green)' : 'var(--yellow)', 'Risk per $1 reward'));
     if (d.exitSignal) primary.push(mini('Exit trigger', '$' + d.exitSignal, 'var(--yellow)', 'Suggested risk line'));
   } else if (sg === 'put_debit_spread' || sg === 'call_debit_spread') {
     if (width != null) primary.push(mini('Spread width', fmtMoneyCents(width), 'var(--text)', 'Max value at expiration'));
+    primary = primary.concat(touchCards());
     if (d.movePct != null) primary.push(mini('Move needed', d.movePct + '%', d.movePct < 5 ? 'var(--green)' : d.movePct < 10 ? 'var(--yellow)' : 'var(--red)', 'To breakeven'));
     if (d.riskReward != null) primary.push(mini('Risk / reward', d.riskReward + ':1', d.riskReward < 1 ? 'var(--green)' : 'var(--yellow)', 'Debit paid vs reward'));
   } else if (sg === 'bwb' || sg === 'butterfly' || sg === 'ratio_spread') {
     if (d.openingCredit != null) primary.push(mini('Opening credit', fmtMoney(d.openingCredit), 'var(--green)', 'Collected at entry'));
     if (d.openingDebit != null) primary.push(mini('Opening debit', fmtMoney(d.openingDebit), 'var(--red)', 'Paid at entry'));
+    primary = primary.concat(touchCards());
     if (d.creditCapturePct != null) primary.push(mini('Credit capture', d.creditCapturePct + '%', d.creditCapturePct >= 60 ? 'var(--green)' : 'var(--yellow)', 'If it moves away from body'));
     if (d.wingRatioLabel) primary.push(mini('Wing ratio', d.wingRatioLabel, 'var(--text)', 'Structure balance'));
   } else if (sg === 'long_call' || sg === 'long_put') {
     if (d.profitTargets && d.profitTargets[0]) primary.push(mini('First target', '$' + d.profitTargets[0].targetPrice, 'var(--green)', d.profitTargets[0].label || 'Realistic target'));
-    if (d.probTouchBreakeven != null) primary.push(mini('Touch breakeven', Math.round(d.probTouchBreakeven * 100) + '%', 'var(--yellow)', 'Before expiration'));
+    primary = primary.concat(touchCards());
   } else if (sg === 'iron_condor' || sg === 'iron_butterfly') {
     if (width != null) primary.push(mini('Wing width', fmtMoneyCents(width), 'var(--text)', 'Outer defined risk'));
-    if (d.probTouchPutShort != null || d.probTouchCallShort != null) {
-      primary.push(mini('Touch shorts', (d.probTouchPutShort != null ? 'P ' + Math.round(d.probTouchPutShort * 100) + '%' : '') + (d.probTouchCallShort != null ? ' C ' + Math.round(d.probTouchCallShort * 100) + '%' : ''), 'var(--yellow)', 'Before expiration'));
-    }
+    primary = primary.concat(touchCards());
+  } else {
+    primary = primary.concat(touchCards());
   }
 
   if (!primary.length && d.exitSignal) primary.push(mini('Exit trigger', '$' + d.exitSignal, 'var(--yellow)', 'Suggested risk line'));
@@ -684,9 +728,9 @@ function renderAnalysisResult(d) {
         '</div>' +
         (fmtAsOf(d.lastDate) ? '<div style="font-size:10px;color:var(--text3);margin-top:6px">Quote as of ' + fmtAsOf(d.lastDate) + '</div>' : '') +
       '</div>' +
+      renderHeaderChips(d) +
     '</div>' +
     (d.structureWarning ? '<div class="structure-warning">' + esc(d.structureWarning) + '</div>' : '') +
-    renderTopPanels(d) +
     renderGreekBox(d) +
     renderUniversalMetrics(d) +
     renderTradeContext(d) +

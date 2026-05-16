@@ -147,10 +147,10 @@ function buildDteSummary(dte, prefs = {}, strategyGroup) {
 
 function buildEarningsSummary(data, result, dte) {
   const date = result.earningsDate || data.earnings?.date || null;
-  if (!date) return { label: 'Unknown', tone: 'neutral', detail: 'Date unavailable', date: null };
   if (result.earningsRisk) {
-    return { label: 'Earnings risk', tone: 'bad', detail: date, date };
+    return { label: 'Earnings risk', tone: 'bad', detail: date || 'Date unavailable', date };
   }
+  if (!date) return { label: 'No earnings risk', tone: 'good', detail: 'Date unavailable', date: null };
   return { label: 'No earnings risk', tone: 'good', detail: dte != null ? `${date}` : date, date };
 }
 
