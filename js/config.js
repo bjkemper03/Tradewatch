@@ -8,8 +8,8 @@ const SUPA_KEY = 'sb_publishable_yqEE2eE9r2iTOnzh43nA5A_hJLnxYeT';
 const SUPA_SYNC_HOSTS = [
   'localhost',
   '127.0.0.1',
-  'optionsplus.app',
-  'www.optionsplus.app',
+  'optionsplus.io',
+  'www.optionsplus.io',
   'tradewatch.vercel.app',
   'tradewatch-git-dev-trade-analysis-overview-ben-kemper-s-projects.vercel.app'
 ];
