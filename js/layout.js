@@ -65,7 +65,7 @@ async function initApp() {
       console.warn('[OP] Supabase load failed, using localStorage cache:', e);
     }
   } else if (_sbClient && currentUser) {
-    console.info('[OP] Supabase table sync skipped on this preview host; using localStorage cache.');
+    console.info('[OP] Supabase table sync skipped on unapproved host:', window.location.hostname);
   }
 
   $('hdr-date').textContent = new Date().toLocaleDateString('en-US', {
