@@ -258,6 +258,12 @@ function fmtBe(values) {
   return arr.slice(0, 2).map(function(v) { return '$' + safeNum(v).toFixed(2); }).join(' / ');
 }
 
+function fmtProbPct(v) {
+  if (v == null || !Number.isFinite(safeNum(v))) return 'N/A';
+  var p = safeNum(v) * 100;
+  return p < 1 && p > 0 ? '<1%' : Math.round(p) + '%';
+}
+
 function spreadWidthFromLegs() {
   var strikes = (azLegData || []).map(function(l) { return safeNum(l.s); }).filter(function(v) { return v > 0; });
   if (strikes.length < 2) return null;
@@ -547,6 +553,7 @@ function payoffExactRows(d, payoffAt) {
     if (lossMarkers[0]) row('Max loss', lossMarkers[0].px, 'Worst expiration area', 'loss', lossMarkers[0].pnl);
   } else {
     if (profitMarkers[0]) row('Max profit', profitMarkers[0].px, 'Best expiration area', 'profit', profitMarkers[0].pnl);
+    else if (d.maxProfitUnlimited) rows.push({ label:'Max profit', px:null, pnl:null, valueText:'Unlimited', note:'Theoretical upside is uncapped', kind:'profit' });
     else if (d.maxProfit != null && !d.maxProfitUnlimited) rows.push({ label:'Max profit', px:null, pnl:safeNum(d.maxProfit), note:'Maximum gain', kind:'profit' });
 
     beVals.slice(0, 2).forEach(function(v, i) { row(i ? 'Breakeven 2' : 'Breakeven', v, 'P/L is about $0', 'be', 0); });
@@ -632,12 +639,12 @@ function renderPayoffShape(d) {
     '<div style="display:flex;justify-content:space-between;font-size:10px;color:var(--text3);margin-top:5px;font-family:var(--mono)"><span>$' + low.toFixed(0) + '</span><span>Current $' + d.price + '</span><span>$' + high.toFixed(0) + '</span></div>' +
     '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(132px,1fr));gap:6px;margin-top:10px">' +
       checkpointRows.map(function(m) {
-        var col = m.pnl >= 0 ? '#22c55e' : '#ef4444';
+        var col = m.valueText === 'Unlimited' ? '#22c55e' : m.pnl >= 0 ? '#22c55e' : '#ef4444';
         return '<div style="background:var(--surface2);border:1px solid var(--border);border-radius:7px;padding:7px 8px;min-width:0">' +
           '<div style="font-size:9px;color:var(--text3);font-weight:700;text-transform:uppercase;letter-spacing:.4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + m.label + '</div>' +
           '<div style="display:flex;justify-content:space-between;gap:8px;align-items:baseline;margin-top:3px;font-family:var(--mono)">' +
-            '<span style="font-size:11px;color:var(--text2)">' + (m.px != null ? '$' + safeNum(m.px).toFixed(2) : 'N/A') + '</span>' +
-            '<span style="font-size:12px;font-weight:800;color:' + col + '">' + fmtMoney(m.pnl) + '</span>' +
+            '<span style="font-size:11px;color:var(--text2)">' + (m.px != null ? '$' + safeNum(m.px).toFixed(2) : (m.valueText === 'Unlimited' ? 'Beyond chart' : 'N/A')) + '</span>' +
+            '<span style="font-size:12px;font-weight:800;color:' + col + '">' + (m.valueText || fmtMoney(m.pnl)) + '</span>' +
           '</div>' +
           (m.note ? '<div style="font-size:9px;color:var(--text3);line-height:1.35;margin-top:3px">' + m.note + '</div>' : '') +
         '</div>';
@@ -679,6 +686,29 @@ function renderTradeContext(d) {
     '</div>';
   }
 
+  function realisticTargetTable() {
+    if (!((sg === 'long_call' || sg === 'long_put') && d.profitTargets && d.profitTargets.length)) return '';
+    return '<div class="context-card" style="grid-column:span 2">' +
+      '<div class="analysis-panel-label" style="color:var(--yellow);margin-bottom:10px">Realistic Targets</div>' +
+      '<div style="display:grid;grid-template-columns:minmax(110px,1.1fr) minmax(76px,.8fr) minmax(72px,.7fr) minmax(62px,.6fr) minmax(62px,.6fr);gap:8px;align-items:center">' +
+        '<div class="analysis-panel-label">Target</div>' +
+        '<div class="analysis-panel-label">Stock</div>' +
+        '<div class="analysis-panel-label">Profit</div>' +
+        '<div class="analysis-panel-label">Touch</div>' +
+        '<div class="analysis-panel-label">Exp</div>' +
+        d.profitTargets.map(function(t) {
+          var profitDollars = safeNum(t.profitDollars != null ? t.profitDollars : t.profit * 100);
+          return '<div style="font-size:12px;color:var(--text);font-weight:700">' + (t.label || ('+$' + profitDollars.toFixed(0))) + '</div>' +
+            '<div style="font-family:var(--mono);font-size:12px;color:var(--text2)">$' + t.targetPrice + '</div>' +
+            '<div style="font-family:var(--mono);font-size:12px;color:' + (profitDollars > 0 ? 'var(--green)' : 'var(--text2)') + '">' + (profitDollars > 0 ? '+$' : '$') + profitDollars.toFixed(0) + '</div>' +
+            '<div style="font-family:var(--mono);font-size:12px;color:var(--green)">' + fmtProbPct(t.probTouch) + '</div>' +
+            '<div style="font-family:var(--mono);font-size:12px;color:var(--green)">' + fmtProbPct(t.prob) + '</div>';
+        }).join('') +
+      '</div>' +
+      (d.framingNote ? '<div class="analysis-panel-detail" style="margin-top:10px">' + d.framingNote + '</div>' : '') +
+    '</div>';
+  }
+
   var primary = [];
   var width = spreadWidthFromLegs();
   function touchCard() {
@@ -696,7 +726,7 @@ function renderTradeContext(d) {
     if (d.probTouchLong != null) {
       rows.push(['Long strike', Math.round(d.probTouchLong * 100) + '%']);
     }
-    if ((sg === 'long_call' || sg === 'long_put') && d.profitTargets && d.profitTargets.length) {
+    if (!(sg === 'long_call' || sg === 'long_put') && d.profitTargets && d.profitTargets.length) {
       d.profitTargets.slice(0, 3).forEach(function(t) {
         if (t.probTouch != null && !rows.some(function(r) { return r[0] === t.label; })) {
           rows.push([t.label || '$' + t.targetPrice, Math.round(t.probTouch * 100) + '%']);
@@ -737,7 +767,7 @@ function renderTradeContext(d) {
     if (d.creditCapturePct != null) primary.push(mini('Credit capture', d.creditCapturePct + '%', d.creditCapturePct >= 60 ? 'var(--green)' : 'var(--yellow)', 'If it moves away from body'));
     if (d.wingRatioLabel) primary.push(mini('Wing ratio', d.wingRatioLabel, 'var(--text)', 'Structure balance'));
   } else if (sg === 'long_call' || sg === 'long_put') {
-    var tc4 = touchCard(); if (tc4) primary.push(tc4);
+    var rt = realisticTargetTable(); if (rt) primary.push(rt);
   } else if (sg === 'iron_condor' || sg === 'iron_butterfly') {
     if (width != null) primary.push(mini('Wing width', fmtMoneyCents(width), 'var(--text)', 'Outer defined risk'));
     var tc5 = touchCard(); if (tc5) primary.push(tc5);
@@ -815,7 +845,6 @@ function renderAnalysisResult(d) {
     renderGreekBox(d) +
     renderUniversalMetrics(d) +
     renderTradeContext(d) +
-    renderLongTargets(d) +
     renderPayoffShape(d) +
     renderModelNotes(d) +
     '<div><button class="btn btn-success btn-w" onclick="logFromAnalysis()">&check; I TOOK THIS TRADE -- LOG IT</button></div>' +
