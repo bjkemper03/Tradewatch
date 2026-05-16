@@ -174,7 +174,8 @@ function buildUniversalMetrics(result) {
     (result.dailyDecay != null ? result.dailyDecay * 100 : null) ??
     (result.greeks?.theta != null ? -result.greeks.theta * 100 : null);
   const isDebit = result.entryType === 'debit' || sg === 'long_call' || sg === 'long_put' ||
-    sg === 'call_debit_spread' || sg === 'put_debit_spread';
+    sg === 'call_debit_spread' || sg === 'put_debit_spread' ||
+    ((sg === 'bwb' || sg === 'butterfly' || sg === 'ratio_spread') && result.isCredit === false);
   if (theta != null) theta = isDebit ? -Math.abs(theta) : Math.abs(theta);
 
   return {

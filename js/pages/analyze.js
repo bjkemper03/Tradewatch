@@ -159,6 +159,9 @@ async function runAnalysis() {
       return;
     }
 
+    d.legs = azLegData.map(function(l) { return Object.assign({}, l); });
+    d.entryPremium = credit;
+
     // Store for log-from-analysis
     azResult = {
       ticker:        d.ticker,
@@ -169,6 +172,7 @@ async function runAnalysis() {
       price:         d.price,
       lastDate:      d.lastDate,
       credit:        credit,
+      entryPremium:  credit,
       entryType:     d.entryType || entryType,
       collateral:    d.collateral != null ? d.collateral : d.maxLoss,
       breakeven:     d.breakeven     || null,
@@ -277,7 +281,7 @@ function formatSignedMoney(v) {
 }
 
 function analysisLegs(d) {
-  return (azLegData && azLegData.length) ? azLegData : (d.legs || []);
+  return (d && d.legs && d.legs.length) ? d.legs : ((azLegData && azLegData.length) ? azLegData : []);
 }
 
 function findLeg(d, action, type) {
@@ -445,23 +449,24 @@ function estimatePayoff(d, px) {
     }
     return null;
   }
-  var premium = safeNum($('az-cr') ? $('az-cr').value : d.credit || d.prem || d.debit || 0);
-  var entryType = $('az-entry') ? $('az-entry').value : (isDebitStrat(d.strategy) ? 'debit' : 'credit');
+  var premium = safeNum(d.entryPremium ?? d.credit ?? d.prem ?? d.debit ?? 0);
+  var entryType = d.entryType || (isDebitStrat(d.strategy) ? 'debit' : 'credit');
+  var qtys = legs.map(function(l) { return Math.max(1, safeNum(l.n || l.qty || 1, 1)); });
+  var premiumContracts = qtys.length && qtys.every(function(q) { return Math.abs(q - qtys[0]) < 0.0001; })
+    ? qtys[0]
+    : 1;
   var netPremium = entryType === 'debit' ? -premium : premium;
-  var perShare = d.strategy === 'COVERED CALL' ? (px - d.price) + premium : netPremium;
+  var pnl = netPremium * 100 * premiumContracts;
+  if (d.strategy === 'COVERED CALL') pnl += (px - d.price) * 100;
   for (var i = 0; i < legs.length; i++) {
     var leg = legs[i];
     var strike = safeNum(leg.s);
     if (!strike) return null;
     var qty = safeNum(leg.n || 1, 1);
     var intrinsic = leg.t === 'CALL' ? Math.max(0, px - strike) : Math.max(0, strike - px);
-    if (d.strategy === 'COVERED CALL' && leg.a === 'SELL' && leg.t === 'CALL') {
-      perShare -= intrinsic * qty;
-    } else {
-      perShare += (leg.a === 'BUY' ? intrinsic : -intrinsic) * qty;
-    }
+    pnl += (leg.a === 'BUY' ? 1 : -1) * intrinsic * qty * 100;
   }
-  return perShare * 100;
+  return pnl;
 }
 
 function payoffShapeMove(e, svg) {
