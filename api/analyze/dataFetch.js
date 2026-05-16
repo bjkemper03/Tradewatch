@@ -328,9 +328,10 @@ export async function fetchAllData(ticker, expFormatted) {
 // ---------------------------------------------------------------------------
 export function findChainContract(chain, strike, optionType) {
   if (!chain || !strike) return null;
-  const typeChar = optionType.charAt(0).toUpperCase(); // 'P' or 'C'
+  const normalizedType = String(optionType || '').toLowerCase();
+  const typeChar = normalizedType.charAt(0).toUpperCase(); // 'P' or 'C'
   return chain.find(o =>
-    o.option_type === typeChar &&
+    String(o.option_type || '').toLowerCase().charAt(0).toUpperCase() === typeChar &&
     Math.abs(parseFloat(o.strike) - parseFloat(strike)) < 0.26
   ) || null;
 }

@@ -48,7 +48,7 @@ async function initApp() {
   if (!localStorage.getItem(HK)) saveHist();
   installAdminNav();
 
-  if (_sbClient && currentUser) {
+  if (_sbClient && currentUser && isSupabaseSyncAllowed()) {
     try {
       const [sbTrades, sbPrefs, sbHist] = await Promise.all([
         getTrades(),
@@ -64,6 +64,8 @@ async function initApp() {
     } catch(e) {
       console.warn('[OP] Supabase load failed, using localStorage cache:', e);
     }
+  } else if (_sbClient && currentUser) {
+    console.info('[OP] Supabase table sync skipped on this preview host; using localStorage cache.');
   }
 
   $('hdr-date').textContent = new Date().toLocaleDateString('en-US', {

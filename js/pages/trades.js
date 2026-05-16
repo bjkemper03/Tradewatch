@@ -65,7 +65,7 @@ function renderTrades() {
       '<div class="fld"><label>DTE at Open</label><input id="tf-dte" placeholder="18" type="number" style="font-family:var(--mono)"></div>' +
     '</div>' +
     '<div class="fg3">' +
-      '<div class="fld"><label>Credit/share $</label><input id="tf-cr" placeholder="0.45" type="number" step="0.01" oninput="tradeAutoCol()" style="font-family:var(--mono)"></div>' +
+      '<div class="fld"><label>Entry/share $</label><input id="tf-cr" placeholder="0.45" type="number" step="0.01" oninput="tradeAutoCol()" style="font-family:var(--mono)"></div>' +
       '<div class="fld"><label>Collateral $ (auto)</label><input id="tf-col" placeholder="Auto" type="number" step="1" style="font-family:var(--mono)"></div>' +
       '<div class="fld"><label>Exit Trigger $</label><input id="tf-exit" placeholder="108" type="number" step="0.01" style="font-family:var(--mono)"></div>' +
     '</div>' +
@@ -141,7 +141,7 @@ function renderTrades() {
       '</div>' +
       g3html([
         mc2('Price',      priceLabel || 'N/A',              lp ? 'var(--green)' : 'var(--text)'),
-        mc2('Credit/shr', '$' + (t.creditReceived || '?'),  'var(--green)'),
+        mc2('Entry/shr', '$' + (t.creditReceived || '?'),  t.entryType === 'debit' ? 'var(--red)' : 'var(--green)'),
         mc2('Collateral', '$' + (t.maxRisk || '?'),         'var(--text)')
       ]) +
       (tags.length > 0
@@ -311,7 +311,7 @@ function buildLegs() {
 
 function tradeAutoCol() {
   var cr  = safeNum($('tf-cr') ? $('tf-cr').value : 0);
-  var col = calcCollateral(formStrat, formLegData, cr);
+  var col = calcCollateral(formStrat, formLegData, cr, isDebitStrat(formStrat) ? 'debit' : 'credit');
   var el  = $('tf-col');
   if (el) el.value = col > 0 ? col.toFixed(0) : '';
 }
@@ -322,6 +322,8 @@ function calcTradeBreakeven(strategy, legs, credit) {
   var cr = safeNum(credit);
   if (strategy === 'LONG PUT' && buyLeg) return safeNum(buyLeg.s) - cr;
   if (strategy === 'LONG CALL' && buyLeg) return safeNum(buyLeg.s) + cr;
+  if (strategy === 'PUT DEBIT SPREAD' && buyLeg) return safeNum(buyLeg.s) - cr;
+  if (strategy === 'CALL DEBIT SPREAD' && buyLeg) return safeNum(buyLeg.s) + cr;
   if (strategy === 'CALL CREDIT SPREAD' && sellLeg) return safeNum(sellLeg.s) + cr;
   if (strategy === 'COVERED CALL') return null;
   if (sellLeg) return safeNum(sellLeg.s) - cr;
@@ -376,6 +378,7 @@ async function submitTrade() {
   var exitVal    = $('tf-exit') ? $('tf-exit').value : '';
   var notesVal   = $('tf-notes')? $('tf-notes').value: '';
   var dteInput   = $('tf-dte')  ? $('tf-dte').value  : '';
+  var entryType  = isDebitStrat(formStrat) ? 'debit' : 'credit';
   var beRaw      = calcTradeBreakeven(formStrat, formLegData, credit);
   var be         = beRaw != null ? parseFloat(beRaw.toFixed(2)) : null;
   var cushionVal = (stock > 0 && be) ? calcTradeCushion({ strategy: formStrat }, stock, be) : null;
@@ -390,6 +393,7 @@ async function submitTrade() {
     expDate:        expRaw,
     dteOpen:        dteInput || (dte != null ? dte.toString() : ''),
     creditReceived: credit.toString(),
+    entryType:      entryType,
     maxRisk:        collateral.toString(),
     stockAtOpen:    stock.toString(),
     exitSignal:     exitVal,
@@ -475,7 +479,7 @@ async function closeT(id, r) {
 async function delT(id) {
   if (confirm('Delete this trade?')) {
     try {
-      if (!isLocalTradeId(id) && _sbClient && currentUser) await deleteTrade(id);
+      if (!isLocalTradeId(id) && _sbClient && currentUser && isSupabaseSyncAllowed()) await deleteTrade(id);
     } catch(e) {
       console.warn('[OP] Delete trade Supabase failed:', e);
       toast('Delete failed in Supabase.');

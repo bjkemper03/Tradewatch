@@ -159,6 +159,9 @@ async function runAnalysis() {
       return;
     }
 
+    d.legs = azLegData.map(function(l) { return Object.assign({}, l); });
+    d.entryPremium = credit;
+
     // Store for log-from-analysis
     azResult = {
       ticker:        d.ticker,
@@ -169,6 +172,7 @@ async function runAnalysis() {
       price:         d.price,
       lastDate:      d.lastDate,
       credit:        credit,
+      entryPremium:  credit,
       entryType:     d.entryType || entryType,
       collateral:    d.collateral != null ? d.collateral : d.maxLoss,
       breakeven:     d.breakeven     || null,
@@ -205,28 +209,28 @@ async function runAnalysis() {
 }
 
 function renderGreekBox(d) {
-  var g = d.greeks || {};
-  var items = [];
-  if (d.absDelta != null) items.push(['Delta', d.absDelta.toFixed(3) + (d.deltaSource === 'Tradier' ? '' : ' ~')]);
-  if (g.gamma != null) items.push(['Gamma', safeNum(g.gamma).toFixed(3)]);
-  if (g.theta != null) items.push(['Theta', safeNum(g.theta).toFixed(3)]);
-  if (g.vega != null)  items.push(['Vega',  safeNum(g.vega).toFixed(3)]);
-  if (g.rho != null)   items.push(['Rho',   safeNum(g.rho).toFixed(3)]);
-  if (d.iv != null)    items.push(['IV',    d.iv + '%']);
-  if (!items.length) return '';
-  return '<div style="display:flex;gap:6px;flex-wrap:wrap;margin:8px 12px 10px">' +
-    items.map(function(item) {
-      return '<span style="display:inline-flex;gap:5px;align-items:center;background:var(--surface2);border:1px solid var(--border);border-radius:6px;padding:5px 8px;font-size:10px">' +
-        '<span style="color:var(--text3);text-transform:uppercase;font-weight:600">' + item[0] + '</span>' +
-        '<span style="font-family:var(--mono);color:var(--text)">' + item[1] + '</span>' +
-      '</span>';
-    }).join('') +
-  '</div>';
+  var g = (d.summary && d.summary.greeks) || d.greeks || {};
+  var items = [
+    ['Delta', d.absDelta != null ? d.absDelta : g.delta],
+    ['Gamma', g.gamma],
+    ['Theta', g.theta],
+    ['Vega',  g.vega],
+    ['Rho',   g.rho]
+  ];
+  return '<div class="greeks-strip">' + items.map(function(item) {
+    var val = item[1];
+    return '<div class="greek-cell">' +
+      '<div class="greek-label">' + item[0] + '</div>' +
+      '<div class="greek-value">' + (val != null ? safeNum(val).toFixed(3) : 'N/A') + '</div>' +
+    '</div>';
+  }).join('') + '</div>';
 }
 
-function renderMetricGrid(metrics) {
-  var items = metrics.slice();
-  return '<div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin:0 12px 10px">' + items.join('') + '</div>';
+function toneColor(tone) {
+  if (tone === 'good') return 'var(--green)';
+  if (tone === 'bad') return 'var(--red)';
+  if (tone === 'warn') return 'var(--yellow)';
+  return 'var(--text)';
 }
 
 function isSpreadGroup(sg) {
@@ -242,6 +246,163 @@ function fmtMoney(v) {
 function fmtRiskMoney(v, unlimited) {
   if (unlimited) return 'Unlimited';
   return fmtMoney(v);
+}
+
+function fmtMoneyCents(v) {
+  if (v == null || !Number.isFinite(safeNum(v))) return 'N/A';
+  var n = safeNum(v);
+  return (n < 0 ? '-$' : '$') + Math.abs(n).toFixed(2);
+}
+
+function fmtBe(values) {
+  if (!values) return 'N/A';
+  var arr = Array.isArray(values) ? values : [values];
+  arr = arr.filter(function(v) { return v != null && Number.isFinite(safeNum(v)); });
+  if (!arr.length) return 'N/A';
+  return arr.slice(0, 2).map(function(v) { return '$' + safeNum(v).toFixed(2); }).join(' / ');
+}
+
+function fmtProbPct(v) {
+  if (v == null || !Number.isFinite(safeNum(v))) return 'N/A';
+  var p = safeNum(v) * 100;
+  return p < 1 && p > 0 ? '<1%' : Math.round(p) + '%';
+}
+
+function spreadWidthFromLegs() {
+  var strikes = (azLegData || []).map(function(l) { return safeNum(l.s); }).filter(function(v) { return v > 0; });
+  if (strikes.length < 2) return null;
+  return Math.max.apply(null, strikes) - Math.min.apply(null, strikes);
+}
+
+function formatSignedMoney(v) {
+  if (v == null || !Number.isFinite(safeNum(v))) return 'N/A';
+  var n = safeNum(v);
+  return (n >= 0 ? '+$' : '-$') + Math.abs(n).toFixed(2);
+}
+
+function analysisLegs(d) {
+  return (d && d.legs && d.legs.length) ? d.legs : ((azLegData && azLegData.length) ? azLegData : []);
+}
+
+function findLeg(d, action, type) {
+  return analysisLegs(d).find(function(l) { return l.a === action && l.t === type; }) || null;
+}
+
+function isDebitAnalysis(d) {
+  var sg = d.strategyGroup || '';
+  return d.entryType === 'debit' || sg === 'long_call' || sg === 'long_put' ||
+    sg === 'call_debit_spread' || sg === 'put_debit_spread';
+}
+
+function cushionSubtext(d) {
+  if (!d.price) return 'Distance from key risk level';
+  var sg = d.strategyGroup || '';
+  var sellPut = findLeg(d, 'SELL', 'PUT');
+  var sellCall = findLeg(d, 'SELL', 'CALL');
+  var ref = null;
+  var detail = 'distance from key risk level';
+
+  if (sg === 'credit_spread' && sellPut) {
+    ref = sellPut.s;
+    detail = 'to short put; above this can expire worthless';
+  } else if (sg === 'credit_spread' && sellCall) {
+    ref = sellCall.s;
+    detail = 'to short call; below this can expire worthless';
+  } else if (sg === 'csp' && sellPut) {
+    ref = sellPut.s;
+    detail = 'to short put assignment line';
+  } else if (sg === 'covered_call' && sellCall) {
+    ref = sellCall.s;
+    detail = 'to short call assignment line';
+  } else if (d.breakeven != null) {
+    ref = d.breakeven;
+    detail = 'to breakeven';
+  }
+
+  return ref != null
+    ? 'Current $' + safeNum(d.price).toFixed(2) + ' &rarr; $' + safeNum(ref).toFixed(2) + ' ' + detail
+    : 'Current $' + safeNum(d.price).toFixed(2) + ' &bull; distance from key risk level';
+}
+
+function renderTopPanels(d) {
+  var s = d.summary || {};
+  var dte = s.dte || { label: d.dte != null ? d.dte + ' DTE' : 'Unknown', tone: 'neutral', detail: 'No expiration date' };
+  var earn = s.earnings || { label: d.earningsRisk ? 'Earnings risk' : 'No earnings risk', tone: d.earningsRisk ? 'bad' : 'good', detail: d.earningsDate || 'Unknown' };
+  var liq = s.liquidity || { label: 'Unknown', tone: 'neutral', detail: 'Liquidity unavailable' };
+  var liqTone = liq.grade === 'Good' ? 'good' : liq.grade === 'Okay' ? 'warn' : liq.grade === 'Thin' || liq.grade === 'Poor' ? 'bad' : 'neutral';
+
+  function panel(label, value, detail, tone) {
+    return '<div class="analysis-panel">' +
+      '<div class="analysis-panel-label">' + label + '</div>' +
+      '<div class="analysis-panel-value" style="color:' + toneColor(tone) + '">' + value + '</div>' +
+      '<div class="analysis-panel-detail">' + (detail || '&nbsp;') + '</div>' +
+    '</div>';
+  }
+
+  var liqDetail = liq.detail || '';
+  if (liq.minOpenInterest != null) liqDetail += (liqDetail ? '<br>' : '') + 'Min OI: ' + liq.minOpenInterest;
+  if (liq.totalVolume != null) liqDetail += (liqDetail ? ' / ' : '') + 'Vol: ' + liq.totalVolume;
+
+  return '<div class="analysis-meta-grid">' +
+    panel('DTE', dte.label, dte.detail, dte.tone) +
+    panel('Earnings', earn.label, earn.detail, earn.tone) +
+    panel('Liquidity', liq.label || liq.grade || 'Unknown', liqDetail || 'Check bid/ask before entry', liqTone) +
+  '</div>';
+}
+
+function renderHeaderChips(d) {
+  var s = d.summary || {};
+  var dte = s.dte || { label: d.dte != null ? d.dte + ' DTE' : 'Unknown', tone: 'neutral', detail: '' };
+  var earn = s.earnings || { label: d.earningsRisk ? 'Earnings risk' : 'No earnings risk', tone: d.earningsRisk ? 'bad' : 'good', detail: d.earningsDate || 'Unknown' };
+  var liq = s.liquidity || { label: 'Unknown', grade: 'Unknown', detail: 'Check bid/ask before entry' };
+  var liqTone = liq.grade === 'Good' ? 'good' : liq.grade === 'Okay' ? 'warn' : liq.grade === 'Thin' || liq.grade === 'Poor' ? 'bad' : 'neutral';
+
+  function chip(label, value, detail, tone) {
+    return '<div class="analysis-chip">' +
+      '<div class="analysis-chip-label">' + label + '</div>' +
+      '<div class="analysis-chip-value" style="color:' + toneColor(tone) + '">' + value + '</div>' +
+      (detail ? '<div class="analysis-chip-detail">' + detail + '</div>' : '') +
+    '</div>';
+  }
+
+  var liqDetail = liq.avgBidAsk != null ? 'Bid/ask $' + liq.avgBidAsk : (liq.detail || '');
+  return '<div class="analysis-chip-row">' +
+    chip('DTE', dte.label, dte.detail, dte.tone) +
+    chip('Earnings', earn.label, earn.detail, earn.tone) +
+    chip('Liquidity', liq.label || liq.grade || 'Unknown', liqDetail, liqTone) +
+  '</div>';
+}
+
+function renderUniversalMetrics(d) {
+  var u = (d.summary && d.summary.universal) || {};
+  var cushion = u.cushionPct ?? d.cushionPct ?? d.minCushionPct ?? d.beCushionPct;
+  var prob = u.probWorthless ?? (d.probWorthless != null ? Math.round(d.probWorthless * 100) : d.probMaxProfit != null ? Math.round(d.probMaxProfit * 100) : null);
+  var theta = u.dailyTheta ?? (d.dailyThetaDollars != null ? d.dailyThetaDollars : d.dailyDecay != null ? d.dailyDecay * 100 : null);
+  var be = u.breakevens || d.breakeven || d.lowerBE || d.putBreakeven || null;
+  var sg = d.strategyGroup || '';
+  var maxProfitText = fmtRiskMoney(u.maxProfit ?? d.maxProfit, u.maxProfitUnlimited || d.maxProfitUnlimited);
+  var maxLossText = fmtRiskMoney(u.maxLoss ?? d.maxLoss ?? d.collateral, u.maxLossUnlimited || d.maxLossUnlimited);
+  var probAgainst = sg === 'long_call' || sg === 'long_put';
+  var thetaKnown = theta != null;
+  if (thetaKnown) theta = isDebitAnalysis(d) ? -Math.abs(theta) : Math.abs(theta);
+  var thetaGood = thetaKnown && !isDebitAnalysis(d);
+
+  function cell(label, value, color, sub) {
+    return '<div class="universal-metric">' +
+      '<div class="universal-label">' + label + '</div>' +
+      '<div class="universal-value" style="color:' + (color || 'var(--text)') + '">' + value + '</div>' +
+      '<div class="universal-sub">' + (sub || '&nbsp;') + '</div>' +
+    '</div>';
+  }
+
+  return '<div class="universal-metrics">' +
+    cell('Cushion', cushion != null ? cushion + '%' : 'N/A', cushion != null ? cushC(cushion) : 'var(--text)', cushionSubtext(d)) +
+    cell('Max Profit', maxProfitText, 'var(--green)', d.entryType === 'debit' ? 'Maximum gain' : 'Credit / income potential') +
+    cell('Max Loss / Risk', maxLossText, 'var(--red)', (u.maxLossUnlimited || d.maxLossUnlimited) ? 'Undefined risk' : 'Defined risk') +
+    cell('Breakeven', fmtBe(be), 'var(--text)', 'At expiration') +
+    cell('Prob. Worthless', prob != null ? prob + '%' : 'N/A', probAgainst ? 'var(--red)' : 'var(--green)', probAgainst ? 'Works against long options' : 'Works in your favor') +
+    cell('Est. Daily Theta', thetaKnown ? formatSignedMoney(theta) : 'N/A', thetaKnown ? (thetaGood ? 'var(--green)' : 'var(--red)') : 'var(--text)', thetaKnown ? (thetaGood ? 'Time decay in your favor' : 'Time decay against you') : 'Estimate unavailable') +
+  '</div>';
 }
 
 function fmtAsOf(v) {
@@ -270,39 +431,42 @@ function renderModelNotes(d) {
 }
 
 function estimatePayoff(d, px) {
-  if (d.payoff && d.payoff.points && d.payoff.points.length) {
-    var pts = d.payoff.points;
-    if (px <= pts[0].px) return pts[0].pnl;
-    if (px >= pts[pts.length - 1].px) return pts[pts.length - 1].pnl;
-    for (var j = 1; j < pts.length; j++) {
-      if (px <= pts[j].px) {
-        var a = pts[j - 1];
-        var b = pts[j];
-        var span = b.px - a.px;
-        if (!span) return b.pnl;
-        return a.pnl + (b.pnl - a.pnl) * ((px - a.px) / span);
+  var legs = analysisLegs(d);
+  if (!legs.length) {
+    if (d.payoff && d.payoff.points && d.payoff.points.length) {
+      var pts = d.payoff.points;
+      if (px <= pts[0].px) return pts[0].pnl;
+      if (px >= pts[pts.length - 1].px) return pts[pts.length - 1].pnl;
+      for (var j = 1; j < pts.length; j++) {
+        if (px <= pts[j].px) {
+          var a = pts[j - 1];
+          var b = pts[j];
+          var span = b.px - a.px;
+          if (!span) return b.pnl;
+          return a.pnl + (b.pnl - a.pnl) * ((px - a.px) / span);
+        }
       }
     }
+    return null;
   }
-  var legs = azLegData || [];
-  if (!legs.length) return null;
-  var premium = safeNum($('az-cr') ? $('az-cr').value : d.credit || d.prem || d.debit || 0);
-  var entryType = $('az-entry') ? $('az-entry').value : (isDebitStrat(d.strategy) ? 'debit' : 'credit');
+  var premium = safeNum(d.entryPremium ?? d.credit ?? d.prem ?? d.debit ?? 0);
+  var entryType = d.entryType || (isDebitStrat(d.strategy) ? 'debit' : 'credit');
+  var qtys = legs.map(function(l) { return Math.max(1, safeNum(l.n || l.qty || 1, 1)); });
+  var premiumContracts = qtys.length && qtys.every(function(q) { return Math.abs(q - qtys[0]) < 0.0001; })
+    ? qtys[0]
+    : 1;
   var netPremium = entryType === 'debit' ? -premium : premium;
-  var perShare = d.strategy === 'COVERED CALL' ? (px - d.price) + premium : netPremium;
+  var pnl = netPremium * 100 * premiumContracts;
+  if (d.strategy === 'COVERED CALL') pnl += (px - d.price) * 100;
   for (var i = 0; i < legs.length; i++) {
     var leg = legs[i];
     var strike = safeNum(leg.s);
     if (!strike) return null;
     var qty = safeNum(leg.n || 1, 1);
     var intrinsic = leg.t === 'CALL' ? Math.max(0, px - strike) : Math.max(0, strike - px);
-    if (d.strategy === 'COVERED CALL' && leg.a === 'SELL' && leg.t === 'CALL') {
-      perShare -= intrinsic * qty;
-    } else {
-      perShare += (leg.a === 'BUY' ? intrinsic : -intrinsic) * qty;
-    }
+    pnl += (leg.a === 'BUY' ? 1 : -1) * intrinsic * qty * 100;
   }
-  return perShare * 100;
+  return pnl;
 }
 
 function payoffShapeMove(e, svg) {
@@ -352,60 +516,61 @@ function payoffShapeLeave() {
 }
 
 function payoffExactRows(d, payoffAt) {
-  if (d.payoff && d.payoff.checkpoints && d.payoff.checkpoints.length) {
-    var sg0 = d.strategyGroup || '';
-    var rows0 = d.payoff.checkpoints.map(function(m) {
-      return {
-        label: m.label,
-        px: m.px,
-        pnl: m.pnl,
-        note: m.note || '',
-        kind: m.kind || ''
-      };
-    });
-    if (isSpreadGroup(sg0)) {
-      var keep = { be: true, short: true, long: true, wing: true, loss: true };
-      rows0 = rows0.filter(function(m) { return keep[m.kind]; }).slice(0, 4);
-    }
-    return rows0;
-  }
   var sg = d.strategyGroup || '';
   var rows = [];
-  function row(label, px, note, kind) {
+  function row(label, px, note, kind, pnlOverride) {
     var pnl = px != null ? payoffAt(px) : null;
+    if (pnlOverride != null) pnl = pnlOverride;
     rows.push({ label: label, px: px, pnl: pnl, note: note || '', kind: kind || '' });
   }
-  var sellPut = (azLegData || []).find(function(l) { return l.a === 'SELL' && l.t === 'PUT'; });
-  var buyPut = (azLegData || []).find(function(l) { return l.a === 'BUY' && l.t === 'PUT'; });
-  var sellCall = (azLegData || []).find(function(l) { return l.a === 'SELL' && l.t === 'CALL'; });
-  var buyCall = (azLegData || []).find(function(l) { return l.a === 'BUY' && l.t === 'CALL'; });
 
-  row('Now', safeNum(d.price), '', 'now');
-  if (d.breakeven && !isSpreadGroup(sg)) row('Breakeven', safeNum(d.breakeven), 'P/L is about $0', 'be');
-  if (d.lowerBE) row('Lower BE', safeNum(d.lowerBE), 'Lower profit boundary', 'be');
-  if (d.upperBE) row('Upper BE', safeNum(d.upperBE), 'Upper profit boundary', 'be');
-  if (d.putBreakeven) row('Put BE', safeNum(d.putBreakeven), 'Lower profit boundary', 'be');
-  if (d.callBreakeven) row('Call BE', safeNum(d.callBreakeven), 'Upper profit boundary', 'be');
+  var checkpoints = d.payoff && d.payoff.checkpoints ? d.payoff.checkpoints : [];
+  var profitMarkers = checkpoints.filter(function(m) { return m.kind === 'profit'; });
+  var lossMarkers = checkpoints.filter(function(m) { return m.kind === 'loss'; });
+  var legs = analysisLegs(d);
+  var sellPut = legs.find(function(l) { return l.a === 'SELL' && l.t === 'PUT'; });
+  var buyPut = legs.find(function(l) { return l.a === 'BUY' && l.t === 'PUT'; });
+  var sellCall = legs.find(function(l) { return l.a === 'SELL' && l.t === 'CALL'; });
+  var buyCall = legs.find(function(l) { return l.a === 'BUY' && l.t === 'CALL'; });
+  var beVals = [];
+  if (d.payoff && d.payoff.breakevens) beVals = beVals.concat(d.payoff.breakevens);
+  ['breakeven', 'lowerBE', 'upperBE', 'putBreakeven', 'callBreakeven'].forEach(function(k) {
+    if (d[k] != null) beVals.push(d[k]);
+  });
+  beVals = beVals.filter(function(v, idx, arr) {
+    return v != null && Number.isFinite(safeNum(v)) &&
+      arr.findIndex(function(o) { return Math.abs(safeNum(o) - safeNum(v)) < 0.01; }) === idx;
+  });
 
-  if ((sg === 'csp' || sg === 'credit_spread') && sellPut) {
-    row('Max profit starts', safeNum(sellPut.s), 'Short put expires worthless above here', 'profit');
-    if (sg === 'credit_spread' && buyPut) row('Max loss starts', safeNum(buyPut.s), 'Spread is fully ITM below here', 'loss');
-    if (sg === 'csp') rows.push({ label:'Max loss endpoint', px: 0, pnl: d.maxLoss != null ? -safeNum(d.maxLoss) : payoffAt(0.01), note:'Theoretical if stock goes to $0', kind:'loss' });
-  } else if (sg === 'covered_call' && sellCall) {
-    row('Max profit starts', safeNum(sellCall.s), 'Called away above here', 'profit');
-  } else if (sg === 'call_debit_spread' && sellCall) {
-    row('Max profit starts', safeNum(sellCall.s), 'Spread reaches full width above here', 'profit');
-  } else if (sg === 'put_debit_spread' && sellPut) {
-    row('Max profit starts', safeNum(sellPut.s), 'Spread reaches full width below here', 'profit');
-  } else if (sg === 'iron_condor' || sg === 'iron_butterfly') {
-    if (sellPut) row('Put short', safeNum(sellPut.s), 'Max-profit tent starts above here', 'short');
-    if (sellCall) row('Call short', safeNum(sellCall.s), 'Max-profit tent ends below here', 'short');
-    if (buyPut) row('Put max loss', safeNum(buyPut.s), 'Lower wing fully breached', 'loss');
-    if (buyCall) row('Call max loss', safeNum(buyCall.s), 'Upper wing fully breached', 'loss');
+  if (sg === 'credit_spread') {
+    var isPutCredit = !!sellPut && !!buyPut;
+    var shortLeg = isPutCredit ? sellPut : sellCall;
+    var longLeg = isPutCredit ? buyPut : buyCall;
+    if (shortLeg) row('Max profit', safeNum(shortLeg.s), isPutCredit ? 'At or above short strike' : 'At or below short strike', 'profit', d.maxProfit != null ? safeNum(d.maxProfit) : payoffAt(safeNum(shortLeg.s)));
+    beVals.slice(0, 2).forEach(function(v, i) { row(i ? 'Breakeven 2' : 'Breakeven', v, 'P/L is about $0', 'be', 0); });
+    if (longLeg) row('Max loss', safeNum(longLeg.s), isPutCredit ? 'At or below long strike' : 'At or above long strike', 'loss', d.maxLoss != null ? -safeNum(d.maxLoss) : payoffAt(safeNum(longLeg.s)));
+    else if (d.maxLoss != null && !d.maxLossUnlimited) rows.push({ label:'Max loss', px:null, pnl:-safeNum(d.maxLoss), note:'Maximum risk', kind:'loss' });
+  } else if (sg === 'bwb' || sg === 'butterfly' || sg === 'ratio_spread') {
+    if (d.openingCredit != null) rows.push({ label:'Opening credit', px:null, pnl:safeNum(d.openingCredit), note:'Collected at entry', kind:'credit' });
+    if (d.openingDebit != null) rows.push({ label:'Opening debit', px:null, pnl:-safeNum(d.openingDebit), note:'Paid at entry', kind:'debit' });
+    if (profitMarkers[0]) row('Max at body', profitMarkers[0].px, 'Best expiration area', 'profit', profitMarkers[0].pnl);
+    beVals.slice(0, 2).forEach(function(v, i) { row(i ? 'Upper breakeven' : 'Lower breakeven', v, 'P/L is about $0', 'be', 0); });
+    if (lossMarkers[0]) row('Max loss', lossMarkers[0].px, 'Worst expiration area', 'loss', lossMarkers[0].pnl);
+  } else {
+    if (profitMarkers[0]) row('Max profit', profitMarkers[0].px, 'Best expiration area', 'profit', profitMarkers[0].pnl);
+    else if (d.maxProfitUnlimited) rows.push({ label:'Max profit', px:null, pnl:null, valueText:'Unlimited', note:'Theoretical upside is uncapped', kind:'profit' });
+    else if (d.maxProfit != null && !d.maxProfitUnlimited) rows.push({ label:'Max profit', px:null, pnl:safeNum(d.maxProfit), note:'Maximum gain', kind:'profit' });
+
+    beVals.slice(0, 2).forEach(function(v, i) { row(i ? 'Breakeven 2' : 'Breakeven', v, 'P/L is about $0', 'be', 0); });
+
+    if (lossMarkers[0]) row('Max loss', lossMarkers[0].px, 'Worst expiration area', 'loss', lossMarkers[0].pnl);
+    else if (d.maxLoss != null && !d.maxLossUnlimited) rows.push({ label:'Max loss', px:null, pnl:-safeNum(d.maxLoss), note:'Maximum risk', kind:'loss' });
   }
 
   return rows.filter(function(r, idx, arr) {
-    return arr.findIndex(function(o) { return o.label === r.label && Math.abs(safeNum(o.px) - safeNum(r.px)) < 0.01; }) === idx;
+    return arr.findIndex(function(o) {
+      return o.label === r.label && (o.px == null || r.px == null || Math.abs(safeNum(o.px) - safeNum(r.px)) < 0.01);
+    }) === idx;
   });
 }
 
@@ -450,11 +615,14 @@ function renderPayoffShape(d) {
     return m.px > 0 && m.px >= low && m.px <= high;
   });
   var markerSvg = markers.slice(0, 8).map(function(m, idx) {
-    var col = m.kind === 'now' ? 'var(--blue2)' : m.kind === 'be' ? 'var(--yellow)' : m.kind === 'short' ? '#fca5a5' : m.kind === 'profit' ? '#22c55e' : '#86efac';
+    var col = m.kind === 'be' ? 'var(--yellow)' : m.kind === 'profit' ? '#22c55e' : m.kind === 'loss' ? '#ef4444' : 'var(--text2)';
     var mx = x({ px: m.px });
     var ty = idx % 2 ? h - 5 : 10;
-    var label = isSpreadGroup(d.strategyGroup || '') && m.kind !== 'now' ? '' : m.label.replace(/Max profit starts/g, 'MaxProfit').replace(/Breakeven/g, 'BE').replace(/ /g, '');
+    var label = m.kind === 'be'
+      ? m.label.replace(/Breakeven/g, 'BE')
+      : '';
     return '<line x1="' + mx.toFixed(1) + '" y1="' + pad + '" x2="' + mx.toFixed(1) + '" y2="' + (h - pad) + '" stroke="' + col + '" stroke-width="1" stroke-dasharray="3 4" opacity=".65"/>' +
+      '<circle cx="' + mx.toFixed(1) + '" cy="' + y(m.pnl).toFixed(1) + '" r="2.4" fill="' + col + '" stroke="#0b0e17" stroke-width="1"/>' +
       (label ? '<text x="' + mx.toFixed(1) + '" y="' + ty + '" text-anchor="middle" fill="' + col + '" font-size="6" font-family="monospace">' + label + '</text>' : '');
   }).join('');
   payoffShapeData = { low: low, high: high, minY: minY, maxY: maxY, w: w, h: h, pad: pad, result: d };
@@ -473,15 +641,15 @@ function renderPayoffShape(d) {
     '</svg>' +
     '<div id="payoff-tip" style="display:none;position:absolute;width:128px;background:var(--surface3);border:1px solid var(--border2);border-radius:8px;padding:7px 8px;box-shadow:0 8px 24px rgba(0,0,0,.35);pointer-events:none;z-index:3"></div>' +
     '</div>' +
-    '<div style="display:flex;justify-content:space-between;font-size:10px;color:var(--text3);margin-top:5px;font-family:var(--mono)"><span>$' + low.toFixed(0) + '</span><span>Now $' + d.price + '</span><span>$' + high.toFixed(0) + '</span></div>' +
+    '<div style="display:flex;justify-content:space-between;font-size:10px;color:var(--text3);margin-top:5px;font-family:var(--mono)"><span>$' + low.toFixed(0) + '</span><span>Current $' + d.price + '</span><span>$' + high.toFixed(0) + '</span></div>' +
     '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(132px,1fr));gap:6px;margin-top:10px">' +
       checkpointRows.map(function(m) {
-        var col = m.pnl >= 0 ? '#22c55e' : '#ef4444';
+        var col = m.valueText === 'Unlimited' ? '#22c55e' : m.pnl >= 0 ? '#22c55e' : '#ef4444';
         return '<div style="background:var(--surface2);border:1px solid var(--border);border-radius:7px;padding:7px 8px;min-width:0">' +
           '<div style="font-size:9px;color:var(--text3);font-weight:700;text-transform:uppercase;letter-spacing:.4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + m.label + '</div>' +
           '<div style="display:flex;justify-content:space-between;gap:8px;align-items:baseline;margin-top:3px;font-family:var(--mono)">' +
-            '<span style="font-size:11px;color:var(--text2)">' + (m.px != null ? '$' + safeNum(m.px).toFixed(2) : 'N/A') + '</span>' +
-            '<span style="font-size:12px;font-weight:800;color:' + col + '">' + fmtMoney(m.pnl) + '</span>' +
+            '<span style="font-size:11px;color:var(--text2)">' + (m.px != null ? '$' + safeNum(m.px).toFixed(2) : (m.valueText === 'Unlimited' ? 'Beyond chart' : 'N/A')) + '</span>' +
+            '<span style="font-size:12px;font-weight:800;color:' + col + '">' + (m.valueText || fmtMoney(m.pnl)) + '</span>' +
           '</div>' +
           (m.note ? '<div style="font-size:9px;color:var(--text3);line-height:1.35;margin-top:3px">' + m.note + '</div>' : '') +
         '</div>';
@@ -493,9 +661,7 @@ function renderPayoffShape(d) {
 function renderTradeContext(d) {
   var supports = d.supports || [];
   var resistances = d.resistances || [];
-  var hasWheel = !!d.wheelScenarios;
-  var hasProb = d.probWorthless != null || d.probAnyProfit != null || d.probTouchShort != null || d.probTouchPutShort != null || d.probTouchCallShort != null;
-  if (!supports.length && !resistances.length && !d.exitSignal && !d.sma20 && !d.em && !hasWheel && !hasProb && d.dailyDecay == null) return '';
+  var sg = d.strategyGroup || '';
   function levelTags(level, kind) {
     var list = kind === 'support' ? (d.supportDetails || []) : (d.resistanceDetails || []);
     var detail = list.find(function(x) { return Math.abs(safeNum(x.price) - safeNum(level)) < 0.01; });
@@ -511,57 +677,147 @@ function renderTradeContext(d) {
   function levelHtml(list, kind) {
     var col = kind === 'support' ? 'var(--green)' : 'var(--red)';
     return list.slice(0, 3).map(function(p) {
-      return '<span style="display:inline-block;margin-right:12px;margin-bottom:4px">' +
-        '<span style="font-family:var(--mono);font-size:14px;color:' + col + ';font-weight:700">$' + p + '</span>' +
+      return '<span style="display:inline-block;margin-right:14px;margin-bottom:6px">' +
+        '<span style="font-family:var(--mono);font-size:13px;color:' + col + ';font-weight:700">$' + p + '</span>' +
         levelTags(p, kind) +
       '</span>';
     }).join('');
   }
   function mini(label, val, color, sub) {
-    return '<div style="background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:9px 10px;min-width:0">' +
-      '<div style="font-size:9px;color:var(--text3);font-weight:700;text-transform:uppercase;letter-spacing:.5px">' + label + '</div>' +
-      '<div style="font-family:var(--mono);font-size:15px;font-weight:800;color:' + (color || 'var(--text)') + ';margin-top:3px">' + val + '</div>' +
-      (sub ? '<div style="font-size:9px;color:var(--text3);line-height:1.35;margin-top:3px">' + sub + '</div>' : '') +
+    return '<div class="context-card">' +
+      '<div class="analysis-panel-label">' + label + '</div>' +
+      '<div class="context-value" style="color:' + (color || 'var(--text)') + '">' + val + '</div>' +
+      (sub ? '<div class="analysis-panel-detail">' + sub + '</div>' : '') +
     '</div>';
   }
-  var sg = d.strategyGroup || '';
-  var probTiles = '';
-  if (d.probWorthless != null) probTiles += mini('Exp worthless', Math.round(d.probWorthless * 100) + '%', sg === 'long_call' || sg === 'long_put' ? '#ef4444' : '#22c55e', 'At expiration');
-  if (!isSpreadGroup(sg) && d.probAnyProfit != null) probTiles += mini('Exp profit', Math.round(d.probAnyProfit * 100) + '%', '#22c55e', 'At expiration');
-  if (d.probTouchShort != null) probTiles += mini('Touch short', Math.round(d.probTouchShort * 100) + '%', '#f59e0b', 'Before expiration');
-  if (d.probTouchPutShort != null || d.probTouchCallShort != null) {
-    probTiles += mini('Touch shorts', (d.probTouchPutShort != null ? 'P ' + Math.round(d.probTouchPutShort * 100) + '%' : '') + (d.probTouchCallShort != null ? ' C ' + Math.round(d.probTouchCallShort * 100) + '%' : ''), '#f59e0b', 'Before expiration');
-  }
-  var wheelHtml = '';
-  if (hasWheel) {
-    var ws = d.wheelScenarios;
-    var yd = ws.ifNotAssigned?.yieldData || ws.ifNotCalled?.yieldData || null;
-    wheelHtml = '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px;margin-top:10px">' +
-      (ws.ifAssigned ? mini('If assigned', '$' + ws.ifAssigned.effectiveCostBasis, '#22c55e', ws.ifAssigned.note) : '') +
-      (ws.ifCalledAway ? mini('If called away', '$' + ws.ifCalledAway.totalPerShare, '#22c55e', ws.ifCalledAway.note) : '') +
-      (yd ? mini('Trade return', yd.tradeReturnPct + '%', '#22c55e', 'Monthly ' + yd.monthlyPct + '% / Annualized ' + yd.annualizedPct + '%') : '') +
-    '</div>';
-  }
-  return '<div class="card">' +
-    '<div style="font-size:10px;color:var(--text3);font-weight:600;text-transform:uppercase;letter-spacing:.5px;margin-bottom:10px">Trade Context</div>' +
-    '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:8px;margin-bottom:10px">' +
-      (d.em != null ? mini('Expected move', '&plusmn;$' + d.em, '#f59e0b', 'One-volatility move by expiration') : '') +
-      (d.dailyDecay != null || d.dailyThetaDollars != null ? mini('Est daily decay', '~$' + (d.dailyThetaDollars != null ? safeNum(d.dailyThetaDollars).toFixed(2) : (d.dailyDecay * 100).toFixed(2)), '#f59e0b', 'Approx option value decay per day') : '') +
-      probTiles +
-      (d.exitSignal ? mini('Exit trigger', '$' + d.exitSignal, '#fca5a5', 'Stock price break level') : '') +
-    '</div>' +
-    '<div style="display:flex;justify-content:space-between;gap:12px;align-items:flex-start">' +
-      '<div style="flex:1;min-width:0">' +
-        '<div style="display:flex;gap:18px;flex-wrap:wrap">' +
-          (supports.length ? '<div><div style="font-size:9px;color:var(--green);letter-spacing:1px;margin-bottom:4px">SUPPORT</div><div>' + levelHtml(supports, 'support') + '</div></div>' : '') +
-          (resistances.length ? '<div><div style="font-size:9px;color:var(--red);letter-spacing:1px;margin-bottom:4px">RESISTANCE</div><div>' + levelHtml(resistances, 'resistance') + '</div></div>' : '') +
-        '</div>' +
+
+  function realisticTargetTable() {
+    if (!((sg === 'long_call' || sg === 'long_put') && d.profitTargets && d.profitTargets.length)) return '';
+    return '<div class="context-card" style="grid-column:span 2">' +
+      '<div class="analysis-panel-label" style="color:var(--yellow);margin-bottom:10px">Realistic Targets</div>' +
+      '<div style="display:grid;grid-template-columns:minmax(110px,1.1fr) minmax(76px,.8fr) minmax(72px,.7fr) minmax(62px,.6fr) minmax(62px,.6fr);gap:8px;align-items:center">' +
+        '<div class="analysis-panel-label">Target</div>' +
+        '<div class="analysis-panel-label">Stock</div>' +
+        '<div class="analysis-panel-label">Profit</div>' +
+        '<div class="analysis-panel-label">Touch</div>' +
+        '<div class="analysis-panel-label">Exp</div>' +
+        d.profitTargets.map(function(t) {
+          var profitDollars = safeNum(t.profitDollars != null ? t.profitDollars : t.profit * 100);
+          return '<div style="font-size:12px;color:var(--text);font-weight:700">' + (t.label || ('+$' + profitDollars.toFixed(0))) + '</div>' +
+            '<div style="font-family:var(--mono);font-size:12px;color:var(--text2)">$' + t.targetPrice + '</div>' +
+            '<div style="font-family:var(--mono);font-size:12px;color:' + (profitDollars > 0 ? 'var(--green)' : 'var(--text2)') + '">' + (profitDollars > 0 ? '+$' : '$') + profitDollars.toFixed(0) + '</div>' +
+            '<div style="font-family:var(--mono);font-size:12px;color:var(--green)">' + fmtProbPct(t.probTouch) + '</div>' +
+            '<div style="font-family:var(--mono);font-size:12px;color:var(--green)">' + fmtProbPct(t.prob) + '</div>';
+        }).join('') +
       '</div>' +
-    '</div>' +
-    (d.sma20 ? '<div style="font-size:10px;color:var(--text3);margin-top:8px">SMA20 $' + d.sma20 + ' / SMA50 $' + d.sma50 + '</div>' : '') +
-    wheelHtml +
+      (d.framingNote ? '<div class="analysis-panel-detail" style="margin-top:10px">' + d.framingNote + '</div>' : '') +
+    '</div>';
+  }
+
+  var primary = [];
+  var width = spreadWidthFromLegs();
+  function touchCard() {
+    var rows = [];
+    if (d.probTouchShort != null) {
+      rows.push(['Short strike', Math.round(d.probTouchShort * 100) + '%']);
+    }
+    if (d.probTouchPutShort != null || d.probTouchCallShort != null) {
+      if (d.probTouchPutShort != null) rows.push(['Put short', Math.round(d.probTouchPutShort * 100) + '%']);
+      if (d.probTouchCallShort != null) rows.push(['Call short', Math.round(d.probTouchCallShort * 100) + '%']);
+    }
+    if (d.probTouchBreakeven != null) {
+      rows.push(['Breakeven', Math.round(d.probTouchBreakeven * 100) + '%']);
+    }
+    if (d.probTouchLong != null) {
+      rows.push(['Long strike', Math.round(d.probTouchLong * 100) + '%']);
+    }
+    if (!(sg === 'long_call' || sg === 'long_put') && d.profitTargets && d.profitTargets.length) {
+      d.profitTargets.slice(0, 3).forEach(function(t) {
+        if (t.probTouch != null && !rows.some(function(r) { return r[0] === t.label; })) {
+          rows.push([t.label || '$' + t.targetPrice, Math.round(t.probTouch * 100) + '%']);
+        }
+      });
+    }
+    if (!rows.length) return '';
+    return '<div class="context-card">' +
+      '<div class="analysis-panel-label">Touch probabilities</div>' +
+      '<div style="display:grid;gap:6px;margin-top:8px">' +
+        rows.slice(0, 4).map(function(r) {
+          return '<div style="display:flex;justify-content:space-between;gap:12px;font-size:11px;color:var(--text2)">' +
+            '<span>' + r[0] + '</span>' +
+            '<strong style="font-family:var(--mono);color:var(--yellow)">' + r[1] + '</strong>' +
+          '</div>';
+        }).join('') +
+      '</div>' +
+      '<div class="analysis-panel-detail">Before expiration</div>' +
+    '</div>';
+  }
+  if (sg === 'credit_spread') {
+    var creditWidthSub = width != null && d.maxProfit != null
+      ? fmtMoney(d.maxProfit) + ' credit on ' + fmtMoneyCents(width) + ' width'
+      : 'Credit quality check';
+    if (d.crWidthPct != null) primary.push(mini('% of width', d.crWidthPct + '%', d.crWidthPct >= prefs.creditWidthMin ? 'var(--green)' : 'var(--yellow)', creditWidthSub));
+    var tc1 = touchCard(); if (tc1) primary.push(tc1);
+    if (d.riskReward != null) primary.push(mini('Risk / reward', d.riskReward + ':1', d.riskReward <= 4 ? 'var(--green)' : 'var(--yellow)', 'Risk per $1 reward'));
+    if (d.exitSignal) primary.push(mini('Exit trigger', '$' + d.exitSignal, 'var(--yellow)', 'Suggested risk line'));
+  } else if (sg === 'put_debit_spread' || sg === 'call_debit_spread') {
+    if (width != null) primary.push(mini('Spread width', fmtMoneyCents(width), 'var(--text)', 'Max value at expiration'));
+    var tc2 = touchCard(); if (tc2) primary.push(tc2);
+    if (d.movePct != null) primary.push(mini('Move needed', d.movePct + '%', d.movePct < 5 ? 'var(--green)' : d.movePct < 10 ? 'var(--yellow)' : 'var(--red)', 'To breakeven'));
+    if (d.riskReward != null) primary.push(mini('Risk / reward', d.riskReward + ':1', d.riskReward < 1 ? 'var(--green)' : 'var(--yellow)', 'Debit paid vs reward'));
+  } else if (sg === 'bwb' || sg === 'butterfly' || sg === 'ratio_spread') {
+    if (d.openingCredit != null) primary.push(mini('Opening credit', fmtMoney(d.openingCredit), 'var(--green)', 'Collected at entry'));
+    if (d.openingDebit != null) primary.push(mini('Opening debit', fmtMoney(d.openingDebit), 'var(--red)', 'Paid at entry'));
+    var tc3 = touchCard(); if (tc3) primary.push(tc3);
+    if (d.creditCapturePct != null) primary.push(mini('Credit capture', d.creditCapturePct + '%', d.creditCapturePct >= 60 ? 'var(--green)' : 'var(--yellow)', 'If it moves away from body'));
+    if (d.wingRatioLabel) primary.push(mini('Wing ratio', d.wingRatioLabel, 'var(--text)', 'Structure balance'));
+  } else if (sg === 'long_call' || sg === 'long_put') {
+    var rt = realisticTargetTable(); if (rt) primary.push(rt);
+  } else if (sg === 'iron_condor' || sg === 'iron_butterfly') {
+    if (width != null) primary.push(mini('Wing width', fmtMoneyCents(width), 'var(--text)', 'Outer defined risk'));
+    var tc5 = touchCard(); if (tc5) primary.push(tc5);
+  } else {
+    var tc6 = touchCard(); if (tc6) primary.push(tc6);
+  }
+
+  if (!primary.length && d.exitSignal) primary.push(mini('Exit trigger', '$' + d.exitSignal, 'var(--yellow)', 'Suggested risk line'));
+  if (d.em != null) primary.push(mini('Expected move', '&plusmn;$' + d.em, 'var(--yellow)', 'One-volatility move'));
+
+  var secondary = '';
+  if (supports.length || resistances.length || d.sma20) {
+    secondary = '<div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--border)">' +
+      '<div style="display:flex;gap:22px;flex-wrap:wrap">' +
+        (supports.length ? '<div><div class="analysis-panel-label" style="color:var(--green)">Support</div><div>' + levelHtml(supports, 'support') + '</div></div>' : '') +
+        (resistances.length ? '<div><div class="analysis-panel-label" style="color:var(--red)">Resistance</div><div>' + levelHtml(resistances, 'resistance') + '</div></div>' : '') +
+      '</div>' +
+      (d.sma20 ? '<div style="font-size:10px;color:var(--text3);margin-top:6px">SMA20 $' + d.sma20 + ' / SMA50 $' + d.sma50 + '</div>' : '') +
+    '</div>';
+  }
+
+  if (!primary.length && !secondary) return '';
+  return '<div class="card">' +
+    '<div class="analysis-panel-label" style="margin-bottom:10px">Trade Context</div>' +
+    '<div class="context-grid">' + primary.join('') + '</div>' +
+    secondary +
   '</div>';
 }
+
+function renderLongTargets(d) {
+  if (!((d.strategyGroup || '') === 'long_call' || (d.strategyGroup || '') === 'long_put') || !d.profitTargets || !d.profitTargets.length) return '';
+  return '<div class="card">' +
+    '<div class="analysis-panel-label" style="margin-bottom:10px">Realistic Targets</div>' +
+    '<div style="display:grid;gap:6px">' +
+      d.profitTargets.map(function(t) {
+        var profitDollars = safeNum(t.profitDollars != null ? t.profitDollars : t.profit * 100);
+        return '<div style="display:grid;grid-template-columns:1fr auto;gap:10px;align-items:center;padding:8px 10px;background:var(--surface2);border:1px solid var(--border);border-radius:8px">' +
+          '<div><strong style="font-size:12px;color:var(--text)">' + (t.label || ('+$' + profitDollars.toFixed(0))) + '</strong><span style="font-size:10px;color:var(--text3);margin-left:8px">$' + t.targetPrice + '</span></div>' +
+          '<div style="font-family:var(--mono);font-size:12px;color:' + (profitDollars > 0 ? 'var(--green)' : 'var(--text2)') + '">' + (profitDollars > 0 ? '+$' : '$') + profitDollars.toFixed(0) + '</div>' +
+        '</div>';
+      }).join('') +
+    '</div>' +
+    (d.framingNote ? '<div style="font-size:10px;color:var(--text3);margin-top:10px;line-height:1.5">' + d.framingNote + '</div>' : '') +
+  '</div>';
+  }
 
 // ---------------------------------------------------------------------------
 // Render analysis results
@@ -572,6 +828,34 @@ function renderAnalysisResult(d) {
   var sigLabel = sig === 'GO' ? 'GO' : sig === 'NO-GO' ? 'NO-GO' : 'CAUTION';
   var issues   = d.issues || [];
   var reasons  = issues.length ? issues.map(function(i) { return i.msg; }) : ['All checks passed -- structure looks solid'];
+
+  var heroTone = sig === 'GO' ? 'good' : sig === 'NO-GO' ? 'bad' : 'warn';
+  var cleanHtml = '<div class="analysis-shell">' +
+    '<div class="analysis-hero ' + heroTone + '">' +
+      '<div class="signal-dot" style="background:' + sc + '">' + sigLabel + '</div>' +
+      '<div>' +
+        '<div class="analysis-title">' + d.ticker + ' &mdash; ' + d.strategy + '</div>' +
+        '<div class="analysis-sub">' +
+          reasons.map(function(r) {
+            var ic = issues.find(function(i) { return i.msg === r; });
+            var col = ic ? (ic.level === 'critical' ? 'var(--red)' : ic.level === 'note' ? 'var(--text2)' : 'var(--yellow)') : 'var(--green)';
+            return '<span style="color:' + col + '">' + r + '</span>';
+          }).join('<br>') +
+        '</div>' +
+        (fmtAsOf(d.lastDate) ? '<div style="font-size:10px;color:var(--text3);margin-top:6px">Quote as of ' + fmtAsOf(d.lastDate) + '</div>' : '') +
+      '</div>' +
+      renderHeaderChips(d) +
+    '</div>' +
+    (d.structureWarning ? '<div class="structure-warning">' + esc(d.structureWarning) + '</div>' : '') +
+    renderGreekBox(d) +
+    renderUniversalMetrics(d) +
+    renderTradeContext(d) +
+    renderPayoffShape(d) +
+    renderModelNotes(d) +
+    '<div><button class="btn btn-success btn-w" onclick="logFromAnalysis()">&check; I TOOK THIS TRADE -- LOG IT</button></div>' +
+  '</div>';
+  $('az-result').innerHTML = cleanHtml;
+  return;
 
   // ── Signal hero ──────────────────────────────────────────────────────────
   var html = '<div style="display:flex;align-items:center;gap:12px;padding:14px;background:' + sc + '08;border:1px solid ' + sc + '25;border-radius:10px;margin:0 12px 10px">' +

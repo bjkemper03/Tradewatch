@@ -6,6 +6,7 @@
 
 import { fetchAllData } from './dataFetch.js';
 import { applyApiHeaders, checkRateLimit, cleanTicker, handleOptions } from '../_security.js';
+import { buildAnalysisSummary } from './summaryModel.js';
 import {
   analyzeCreditSpread,
   analyzeIronCondor,
@@ -178,6 +179,32 @@ function resolveStrategy(selectedStrategy, legs) {
   return { strategy: selectedStrategy, detected };
 }
 
+function applySummaryRisk(result, summary) {
+  const issues = Array.isArray(result.issues) ? [...result.issues] : [];
+  const liq = summary?.liquidity;
+  if (liq?.grade === 'Poor') {
+    issues.push({
+      level: 'critical',
+      weight: 5,
+      msg: 'Poor option liquidity -- bid/ask and fills may make entry or exit unsafe',
+    });
+  } else if (liq?.grade === 'Thin') {
+    issues.push({
+      level: 'warning',
+      weight: 3,
+      msg: 'Thin option liquidity -- use limit orders and confirm fills',
+    });
+  }
+
+  result.issues = issues;
+  if (issues.some(i => i.level === 'critical')) {
+    result.signal = 'NO-GO';
+  } else if (issues.some(i => i.level === 'warning') && result.signal === 'GO') {
+    result.signal = 'CAUTION';
+  }
+  return result;
+}
+
 // ---------------------------------------------------------------------------
 // Handler
 // ---------------------------------------------------------------------------
@@ -303,6 +330,8 @@ export default async function handler(req, res) {
   if (result.error) {
     return res.status(400).json({ ok: false, error: result.error });
   }
+  const summary = buildAnalysisSummary({ data, result, legs, dte, prefs });
+  result = applySummaryRisk(result, summary);
 
   // ── Build final response ─────────────────────────────────────────────────
   return res.status(200).json({
@@ -315,6 +344,7 @@ export default async function handler(req, res) {
     structureWarning: strategyResolution.warning || null,
     detectedStrategy: strategyResolution.detected?.strategy || null,
     strategyGroup: result.strategyGroup,
+    summary,
     dte,
     expDate:     expFormatted,
     lastDate:    data.lastDate,

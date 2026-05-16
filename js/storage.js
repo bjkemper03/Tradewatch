@@ -33,6 +33,13 @@ function cacheClear(prefix) {
   } catch (e) {}
 }
 
+function isSupabaseSyncAllowed() {
+  var host = (window.location.hostname || '').toLowerCase();
+  return SUPA_SYNC_HOSTS.some(function(allowed) {
+    return host === allowed || (allowed.startsWith('*.') && host.endsWith(allowed.slice(1)));
+  });
+}
+
 // ---------------------------------------------------------------------------
 // Local app persistence
 // ---------------------------------------------------------------------------
@@ -42,14 +49,14 @@ function saveTrades() {
 
 function saveHist() {
   localStorage.setItem(HK, JSON.stringify(hist));
-  if (_sbClient && currentUser) {
+  if (_sbClient && currentUser && isSupabaseSyncAllowed()) {
     saveBaseline(hist).catch(e => console.warn('[OP] saveHist Supabase sync failed:', e));
   }
 }
 
 function savePrefs() {
   localStorage.setItem(CK.prefs, JSON.stringify(prefs));
-  if (_sbClient && currentUser) {
+  if (_sbClient && currentUser && isSupabaseSyncAllowed()) {
     saveUserSettings(prefs).catch(e => console.warn('[OP] savePrefs Supabase sync failed:', e));
   }
 }
@@ -198,6 +205,7 @@ function appTradeFields(trade) {
   return {
     dteOpen:        trade.dteOpen ?? trade.dte ?? '',
     creditReceived:trade.creditReceived ?? trade.credit ?? '',
+    entryType:     trade.entryType || ((trade.debit != null && trade.debit !== '') ? 'debit' : ''),
     maxRisk:       trade.maxRisk ?? trade.maxLoss ?? '',
     stockAtOpen:   trade.stockAtOpen ?? trade.openPrice ?? '',
     exitSignal:    trade.exitSignal || '',
@@ -224,8 +232,8 @@ function buildTradePayload(trade, userId) {
     legs:         trade.legs || [],
     exp_date:     trade.expDate || null,
     dte_entry:    safeNum(app.dteOpen, null),
-    credit:       safeNum(app.creditReceived, null),
-    debit:        trade.debit || null,
+    credit:       app.entryType === 'debit' ? null : safeNum(app.creditReceived, null),
+    debit:        app.entryType === 'debit' ? safeNum(app.creditReceived, null) : (trade.debit || null),
     contracts:    trade.contracts || 1,
     spread_width: trade.spreadWidth || null,
     max_profit:   trade.maxProfit || null,
@@ -254,7 +262,8 @@ function normalizeTrade(raw) {
     legs:           raw.legs || [],
     expDate:        raw.expDate ?? raw.exp_date ?? '',
     dteOpen:        raw.dteOpen ?? app.dteOpen ?? (raw.dte_entry != null ? String(raw.dte_entry) : ''),
-    creditReceived: raw.creditReceived ?? app.creditReceived ?? (raw.credit != null ? String(raw.credit) : ''),
+    creditReceived: raw.creditReceived ?? app.creditReceived ?? (raw.credit != null ? String(raw.credit) : raw.debit != null ? String(raw.debit) : ''),
+    entryType:      raw.entryType ?? app.entryType ?? (raw.debit != null ? 'debit' : 'credit'),
     maxRisk:        raw.maxRisk ?? app.maxRisk ?? (raw.max_loss != null ? String(raw.max_loss) : ''),
     stockAtOpen:    raw.stockAtOpen ?? app.stockAtOpen ?? (raw.open_price != null ? String(raw.open_price) : ''),
     exitSignal:     raw.exitSignal ?? app.exitSignal ?? '',
@@ -275,7 +284,7 @@ function normalizeTrade(raw) {
 
 async function persistTrade(trade) {
   saveTrades();
-  if (!_sbClient || !currentUser) return trade;
+  if (!_sbClient || !currentUser || !isSupabaseSyncAllowed()) return trade;
   const saved = await saveTrade(trade);
   const idx = trades.findIndex(t => t.id === trade.id);
   if (idx >= 0) trades[idx] = saved;
