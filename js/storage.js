@@ -33,6 +33,13 @@ function cacheClear(prefix) {
   } catch (e) {}
 }
 
+function isSupabaseSyncAllowed() {
+  var host = (window.location.hostname || '').toLowerCase();
+  return SUPA_SYNC_HOSTS.some(function(allowed) {
+    return host === allowed || (allowed.startsWith('*.') && host.endsWith(allowed.slice(1)));
+  });
+}
+
 // ---------------------------------------------------------------------------
 // Local app persistence
 // ---------------------------------------------------------------------------
@@ -42,14 +49,14 @@ function saveTrades() {
 
 function saveHist() {
   localStorage.setItem(HK, JSON.stringify(hist));
-  if (_sbClient && currentUser) {
+  if (_sbClient && currentUser && isSupabaseSyncAllowed()) {
     saveBaseline(hist).catch(e => console.warn('[OP] saveHist Supabase sync failed:', e));
   }
 }
 
 function savePrefs() {
   localStorage.setItem(CK.prefs, JSON.stringify(prefs));
-  if (_sbClient && currentUser) {
+  if (_sbClient && currentUser && isSupabaseSyncAllowed()) {
     saveUserSettings(prefs).catch(e => console.warn('[OP] savePrefs Supabase sync failed:', e));
   }
 }
@@ -275,7 +282,7 @@ function normalizeTrade(raw) {
 
 async function persistTrade(trade) {
   saveTrades();
-  if (!_sbClient || !currentUser) return trade;
+  if (!_sbClient || !currentUser || !isSupabaseSyncAllowed()) return trade;
   const saved = await saveTrade(trade);
   const idx = trades.findIndex(t => t.id === trade.id);
   if (idx >= 0) trades[idx] = saved;

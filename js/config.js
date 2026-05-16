@@ -5,6 +5,14 @@
 
 const SUPA_URL = 'https://mvohmjzwdvjilvljbivg.supabase.co';
 const SUPA_KEY = 'sb_publishable_yqEE2eE9r2iTOnzh43nA5A_hJLnxYeT';
+const SUPA_SYNC_HOSTS = [
+  'localhost',
+  '127.0.0.1',
+  'optionsplus.app',
+  'www.optionsplus.app',
+  'tradewatch.vercel.app',
+  'tradewatch-git-dev-trade-analysis-overview-ben-kemper-s-projects.vercel.app'
+];
 
 const API = { market:'/api/market', quote:'/api/quote', earnings:'/api/earnings', analyze:'/api/analyze' };
 const CK = { mkt:'op_mkt_v2', sec:'op_sec_v2', earn:'op_earn_v2_', lp:'op_lp_v2_', prefs:'op_prefs_v2' };

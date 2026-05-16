@@ -475,7 +475,7 @@ async function closeT(id, r) {
 async function delT(id) {
   if (confirm('Delete this trade?')) {
     try {
-      if (!isLocalTradeId(id) && _sbClient && currentUser) await deleteTrade(id);
+      if (!isLocalTradeId(id) && _sbClient && currentUser && isSupabaseSyncAllowed()) await deleteTrade(id);
     } catch(e) {
       console.warn('[OP] Delete trade Supabase failed:', e);
       toast('Delete failed in Supabase.');
