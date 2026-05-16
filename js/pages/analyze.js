@@ -329,6 +329,7 @@ function renderUniversalMetrics(d) {
   var maxProfitText = fmtRiskMoney(u.maxProfit ?? d.maxProfit, u.maxProfitUnlimited || d.maxProfitUnlimited);
   var maxLossText = fmtRiskMoney(u.maxLoss ?? d.maxLoss ?? d.collateral, u.maxLossUnlimited || d.maxLossUnlimited);
   var probAgainst = sg === 'long_call' || sg === 'long_put';
+  var currentPriceSub = d.price ? 'Current $' + safeNum(d.price).toFixed(2) + ' &bull; distance from key risk level' : 'Distance from key risk level';
 
   function cell(label, value, color, sub) {
     return '<div class="universal-metric">' +
@@ -339,7 +340,7 @@ function renderUniversalMetrics(d) {
   }
 
   return '<div class="universal-metrics">' +
-    cell('Cushion', cushion != null ? cushion + '%' : 'N/A', cushion != null ? cushC(cushion) : 'var(--text)', 'Distance from key risk level') +
+    cell('Cushion', cushion != null ? cushion + '%' : 'N/A', cushion != null ? cushC(cushion) : 'var(--text)', currentPriceSub) +
     cell('Max Profit', maxProfitText, 'var(--green)', d.entryType === 'debit' ? 'Maximum gain' : 'Credit / income potential') +
     cell('Max Loss / Risk', maxLossText, 'var(--red)', (u.maxLossUnlimited || d.maxLossUnlimited) ? 'Undefined risk' : 'Defined risk') +
     cell('Breakeven', fmtBe(be), 'var(--text)', 'At expiration') +
@@ -374,22 +375,24 @@ function renderModelNotes(d) {
 }
 
 function estimatePayoff(d, px) {
-  if (d.payoff && d.payoff.points && d.payoff.points.length) {
-    var pts = d.payoff.points;
-    if (px <= pts[0].px) return pts[0].pnl;
-    if (px >= pts[pts.length - 1].px) return pts[pts.length - 1].pnl;
-    for (var j = 1; j < pts.length; j++) {
-      if (px <= pts[j].px) {
-        var a = pts[j - 1];
-        var b = pts[j];
-        var span = b.px - a.px;
-        if (!span) return b.pnl;
-        return a.pnl + (b.pnl - a.pnl) * ((px - a.px) / span);
+  var legs = (azLegData && azLegData.length) ? azLegData : (d.legs || []);
+  if (!legs.length) {
+    if (d.payoff && d.payoff.points && d.payoff.points.length) {
+      var pts = d.payoff.points;
+      if (px <= pts[0].px) return pts[0].pnl;
+      if (px >= pts[pts.length - 1].px) return pts[pts.length - 1].pnl;
+      for (var j = 1; j < pts.length; j++) {
+        if (px <= pts[j].px) {
+          var a = pts[j - 1];
+          var b = pts[j];
+          var span = b.px - a.px;
+          if (!span) return b.pnl;
+          return a.pnl + (b.pnl - a.pnl) * ((px - a.px) / span);
+        }
       }
     }
+    return null;
   }
-  var legs = azLegData || [];
-  if (!legs.length) return null;
   var premium = safeNum($('az-cr') ? $('az-cr').value : d.credit || d.prem || d.debit || 0);
   var entryType = $('az-entry') ? $('az-entry').value : (isDebitStrat(d.strategy) ? 'debit' : 'credit');
   var netPremium = entryType === 'debit' ? -premium : premium;
@@ -467,6 +470,11 @@ function payoffExactRows(d, payoffAt) {
   var checkpoints = d.payoff && d.payoff.checkpoints ? d.payoff.checkpoints : [];
   var profitMarkers = checkpoints.filter(function(m) { return m.kind === 'profit'; });
   var lossMarkers = checkpoints.filter(function(m) { return m.kind === 'loss'; });
+  var legs = (azLegData && azLegData.length) ? azLegData : (d.legs || []);
+  var sellPut = legs.find(function(l) { return l.a === 'SELL' && l.t === 'PUT'; });
+  var buyPut = legs.find(function(l) { return l.a === 'BUY' && l.t === 'PUT'; });
+  var sellCall = legs.find(function(l) { return l.a === 'SELL' && l.t === 'CALL'; });
+  var buyCall = legs.find(function(l) { return l.a === 'BUY' && l.t === 'CALL'; });
   var beVals = [];
   if (d.payoff && d.payoff.breakevens) beVals = beVals.concat(d.payoff.breakevens);
   ['breakeven', 'lowerBE', 'upperBE', 'putBreakeven', 'callBreakeven'].forEach(function(k) {
@@ -477,7 +485,15 @@ function payoffExactRows(d, payoffAt) {
       arr.findIndex(function(o) { return Math.abs(safeNum(o) - safeNum(v)) < 0.01; }) === idx;
   });
 
-  if (sg === 'bwb' || sg === 'butterfly' || sg === 'ratio_spread') {
+  if (sg === 'credit_spread') {
+    var isPutCredit = !!sellPut && !!buyPut;
+    var shortLeg = isPutCredit ? sellPut : sellCall;
+    var longLeg = isPutCredit ? buyPut : buyCall;
+    if (shortLeg) row('Max profit', safeNum(shortLeg.s), isPutCredit ? 'At or above short strike' : 'At or below short strike', 'profit', d.maxProfit != null ? safeNum(d.maxProfit) : payoffAt(safeNum(shortLeg.s)));
+    beVals.slice(0, 2).forEach(function(v, i) { row(i ? 'Breakeven 2' : 'Breakeven', v, 'P/L is about $0', 'be', 0); });
+    if (longLeg) row('Max loss', safeNum(longLeg.s), isPutCredit ? 'At or below long strike' : 'At or above long strike', 'loss', d.maxLoss != null ? -safeNum(d.maxLoss) : payoffAt(safeNum(longLeg.s)));
+    else if (d.maxLoss != null && !d.maxLossUnlimited) rows.push({ label:'Max loss', px:null, pnl:-safeNum(d.maxLoss), note:'Maximum risk', kind:'loss' });
+  } else if (sg === 'bwb' || sg === 'butterfly' || sg === 'ratio_spread') {
     if (d.openingCredit != null) rows.push({ label:'Opening credit', px:null, pnl:safeNum(d.openingCredit), note:'Collected at entry', kind:'credit' });
     if (d.openingDebit != null) rows.push({ label:'Opening debit', px:null, pnl:-safeNum(d.openingDebit), note:'Paid at entry', kind:'debit' });
     if (profitMarkers[0]) row('Max at body', profitMarkers[0].px, 'Best expiration area', 'profit', profitMarkers[0].pnl);
