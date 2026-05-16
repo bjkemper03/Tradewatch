@@ -270,6 +270,50 @@ function formatSignedMoney(v) {
   return (n >= 0 ? '+$' : '-$') + Math.abs(n).toFixed(2);
 }
 
+function analysisLegs(d) {
+  return (azLegData && azLegData.length) ? azLegData : (d.legs || []);
+}
+
+function findLeg(d, action, type) {
+  return analysisLegs(d).find(function(l) { return l.a === action && l.t === type; }) || null;
+}
+
+function isDebitAnalysis(d) {
+  var sg = d.strategyGroup || '';
+  return d.entryType === 'debit' || sg === 'long_call' || sg === 'long_put' ||
+    sg === 'call_debit_spread' || sg === 'put_debit_spread';
+}
+
+function cushionSubtext(d) {
+  if (!d.price) return 'Distance from key risk level';
+  var sg = d.strategyGroup || '';
+  var sellPut = findLeg(d, 'SELL', 'PUT');
+  var sellCall = findLeg(d, 'SELL', 'CALL');
+  var ref = null;
+  var detail = 'distance from key risk level';
+
+  if (sg === 'credit_spread' && sellPut) {
+    ref = sellPut.s;
+    detail = 'to short put; above this can expire worthless';
+  } else if (sg === 'credit_spread' && sellCall) {
+    ref = sellCall.s;
+    detail = 'to short call; below this can expire worthless';
+  } else if (sg === 'csp' && sellPut) {
+    ref = sellPut.s;
+    detail = 'to short put assignment line';
+  } else if (sg === 'covered_call' && sellCall) {
+    ref = sellCall.s;
+    detail = 'to short call assignment line';
+  } else if (d.breakeven != null) {
+    ref = d.breakeven;
+    detail = 'to breakeven';
+  }
+
+  return ref != null
+    ? 'Current $' + safeNum(d.price).toFixed(2) + ' &rarr; $' + safeNum(ref).toFixed(2) + ' ' + detail
+    : 'Current $' + safeNum(d.price).toFixed(2) + ' &bull; distance from key risk level';
+}
+
 function renderTopPanels(d) {
   var s = d.summary || {};
   var dte = s.dte || { label: d.dte != null ? d.dte + ' DTE' : 'Unknown', tone: 'neutral', detail: 'No expiration date' };
@@ -329,7 +373,9 @@ function renderUniversalMetrics(d) {
   var maxProfitText = fmtRiskMoney(u.maxProfit ?? d.maxProfit, u.maxProfitUnlimited || d.maxProfitUnlimited);
   var maxLossText = fmtRiskMoney(u.maxLoss ?? d.maxLoss ?? d.collateral, u.maxLossUnlimited || d.maxLossUnlimited);
   var probAgainst = sg === 'long_call' || sg === 'long_put';
-  var currentPriceSub = d.price ? 'Current $' + safeNum(d.price).toFixed(2) + ' &bull; distance from key risk level' : 'Distance from key risk level';
+  var thetaKnown = theta != null;
+  if (thetaKnown) theta = isDebitAnalysis(d) ? -Math.abs(theta) : Math.abs(theta);
+  var thetaGood = thetaKnown && !isDebitAnalysis(d);
 
   function cell(label, value, color, sub) {
     return '<div class="universal-metric">' +
@@ -340,12 +386,12 @@ function renderUniversalMetrics(d) {
   }
 
   return '<div class="universal-metrics">' +
-    cell('Cushion', cushion != null ? cushion + '%' : 'N/A', cushion != null ? cushC(cushion) : 'var(--text)', currentPriceSub) +
+    cell('Cushion', cushion != null ? cushion + '%' : 'N/A', cushion != null ? cushC(cushion) : 'var(--text)', cushionSubtext(d)) +
     cell('Max Profit', maxProfitText, 'var(--green)', d.entryType === 'debit' ? 'Maximum gain' : 'Credit / income potential') +
     cell('Max Loss / Risk', maxLossText, 'var(--red)', (u.maxLossUnlimited || d.maxLossUnlimited) ? 'Undefined risk' : 'Defined risk') +
     cell('Breakeven', fmtBe(be), 'var(--text)', 'At expiration') +
     cell('Prob. Worthless', prob != null ? prob + '%' : 'N/A', probAgainst ? 'var(--red)' : 'var(--green)', probAgainst ? 'Works against long options' : 'Works in your favor') +
-    cell('Est. Daily Theta', theta != null ? formatSignedMoney(theta) : 'N/A', theta == null ? 'var(--text)' : theta >= 0 ? 'var(--green)' : 'var(--red)', theta == null ? 'Estimate unavailable' : theta >= 0 ? 'Time decay in your favor' : 'Time decay against you') +
+    cell('Est. Daily Theta', thetaKnown ? formatSignedMoney(theta) : 'N/A', thetaKnown ? (thetaGood ? 'var(--green)' : 'var(--red)') : 'var(--text)', thetaKnown ? (thetaGood ? 'Time decay in your favor' : 'Time decay against you') : 'Estimate unavailable') +
   '</div>';
 }
 
@@ -375,7 +421,7 @@ function renderModelNotes(d) {
 }
 
 function estimatePayoff(d, px) {
-  var legs = (azLegData && azLegData.length) ? azLegData : (d.legs || []);
+  var legs = analysisLegs(d);
   if (!legs.length) {
     if (d.payoff && d.payoff.points && d.payoff.points.length) {
       var pts = d.payoff.points;
@@ -470,7 +516,7 @@ function payoffExactRows(d, payoffAt) {
   var checkpoints = d.payoff && d.payoff.checkpoints ? d.payoff.checkpoints : [];
   var profitMarkers = checkpoints.filter(function(m) { return m.kind === 'profit'; });
   var lossMarkers = checkpoints.filter(function(m) { return m.kind === 'loss'; });
-  var legs = (azLegData && azLegData.length) ? azLegData : (d.legs || []);
+  var legs = analysisLegs(d);
   var sellPut = legs.find(function(l) { return l.a === 'SELL' && l.t === 'PUT'; });
   var buyPut = legs.find(function(l) { return l.a === 'BUY' && l.t === 'PUT'; });
   var sellCall = legs.find(function(l) { return l.a === 'SELL' && l.t === 'CALL'; });
@@ -560,8 +606,11 @@ function renderPayoffShape(d) {
     var col = m.kind === 'be' ? 'var(--yellow)' : m.kind === 'profit' ? '#22c55e' : m.kind === 'loss' ? '#ef4444' : 'var(--text2)';
     var mx = x({ px: m.px });
     var ty = idx % 2 ? h - 5 : 10;
-    var label = m.label.replace(/Max profit/g, 'Max Profit').replace(/Max loss/g, 'Max Loss').replace(/Breakeven/g, 'BE');
+    var label = m.kind === 'be'
+      ? m.label.replace(/Breakeven/g, 'BE')
+      : '';
     return '<line x1="' + mx.toFixed(1) + '" y1="' + pad + '" x2="' + mx.toFixed(1) + '" y2="' + (h - pad) + '" stroke="' + col + '" stroke-width="1" stroke-dasharray="3 4" opacity=".65"/>' +
+      '<circle cx="' + mx.toFixed(1) + '" cy="' + y(m.pnl).toFixed(1) + '" r="2.4" fill="' + col + '" stroke="#0b0e17" stroke-width="1"/>' +
       (label ? '<text x="' + mx.toFixed(1) + '" y="' + ty + '" text-anchor="middle" fill="' + col + '" font-size="6" font-family="monospace">' + label + '</text>' : '');
   }).join('');
   payoffShapeData = { low: low, high: high, minY: minY, maxY: maxY, w: w, h: h, pad: pad, result: d };
@@ -632,49 +681,68 @@ function renderTradeContext(d) {
 
   var primary = [];
   var width = spreadWidthFromLegs();
-  function touchCards() {
-    var cards = [];
+  function touchCard() {
+    var rows = [];
     if (d.probTouchShort != null) {
-      cards.push(mini('Touch short', Math.round(d.probTouchShort * 100) + '%', 'var(--yellow)', 'Before expiration'));
+      rows.push(['Short strike', Math.round(d.probTouchShort * 100) + '%']);
     }
     if (d.probTouchPutShort != null || d.probTouchCallShort != null) {
-      cards.push(mini('Touch shorts', (d.probTouchPutShort != null ? 'P ' + Math.round(d.probTouchPutShort * 100) + '%' : '') + (d.probTouchCallShort != null ? ' C ' + Math.round(d.probTouchCallShort * 100) + '%' : ''), 'var(--yellow)', 'Before expiration'));
+      if (d.probTouchPutShort != null) rows.push(['Put short', Math.round(d.probTouchPutShort * 100) + '%']);
+      if (d.probTouchCallShort != null) rows.push(['Call short', Math.round(d.probTouchCallShort * 100) + '%']);
     }
     if (d.probTouchBreakeven != null) {
-      cards.push(mini('Touch breakeven', Math.round(d.probTouchBreakeven * 100) + '%', 'var(--yellow)', 'Before expiration'));
+      rows.push(['Breakeven', Math.round(d.probTouchBreakeven * 100) + '%']);
     }
     if (d.probTouchLong != null) {
-      cards.push(mini('Touch long', Math.round(d.probTouchLong * 100) + '%', 'var(--text2)', 'Protection strike'));
+      rows.push(['Long strike', Math.round(d.probTouchLong * 100) + '%']);
     }
-    return cards;
+    if ((sg === 'long_call' || sg === 'long_put') && d.profitTargets && d.profitTargets.length) {
+      d.profitTargets.slice(0, 3).forEach(function(t) {
+        if (t.probTouch != null && !rows.some(function(r) { return r[0] === t.label; })) {
+          rows.push([t.label || '$' + t.targetPrice, Math.round(t.probTouch * 100) + '%']);
+        }
+      });
+    }
+    if (!rows.length) return '';
+    return '<div class="context-card">' +
+      '<div class="analysis-panel-label">Touch probabilities</div>' +
+      '<div style="display:grid;gap:6px;margin-top:8px">' +
+        rows.slice(0, 4).map(function(r) {
+          return '<div style="display:flex;justify-content:space-between;gap:12px;font-size:11px;color:var(--text2)">' +
+            '<span>' + r[0] + '</span>' +
+            '<strong style="font-family:var(--mono);color:var(--yellow)">' + r[1] + '</strong>' +
+          '</div>';
+        }).join('') +
+      '</div>' +
+      '<div class="analysis-panel-detail">Before expiration</div>' +
+    '</div>';
   }
   if (sg === 'credit_spread') {
     var creditWidthSub = width != null && d.maxProfit != null
       ? fmtMoney(d.maxProfit) + ' credit on ' + fmtMoneyCents(width) + ' width'
       : 'Credit quality check';
     if (d.crWidthPct != null) primary.push(mini('% of width', d.crWidthPct + '%', d.crWidthPct >= prefs.creditWidthMin ? 'var(--green)' : 'var(--yellow)', creditWidthSub));
-    primary = primary.concat(touchCards());
+    var tc1 = touchCard(); if (tc1) primary.push(tc1);
     if (d.riskReward != null) primary.push(mini('Risk / reward', d.riskReward + ':1', d.riskReward <= 4 ? 'var(--green)' : 'var(--yellow)', 'Risk per $1 reward'));
     if (d.exitSignal) primary.push(mini('Exit trigger', '$' + d.exitSignal, 'var(--yellow)', 'Suggested risk line'));
   } else if (sg === 'put_debit_spread' || sg === 'call_debit_spread') {
     if (width != null) primary.push(mini('Spread width', fmtMoneyCents(width), 'var(--text)', 'Max value at expiration'));
-    primary = primary.concat(touchCards());
+    var tc2 = touchCard(); if (tc2) primary.push(tc2);
     if (d.movePct != null) primary.push(mini('Move needed', d.movePct + '%', d.movePct < 5 ? 'var(--green)' : d.movePct < 10 ? 'var(--yellow)' : 'var(--red)', 'To breakeven'));
     if (d.riskReward != null) primary.push(mini('Risk / reward', d.riskReward + ':1', d.riskReward < 1 ? 'var(--green)' : 'var(--yellow)', 'Debit paid vs reward'));
   } else if (sg === 'bwb' || sg === 'butterfly' || sg === 'ratio_spread') {
     if (d.openingCredit != null) primary.push(mini('Opening credit', fmtMoney(d.openingCredit), 'var(--green)', 'Collected at entry'));
     if (d.openingDebit != null) primary.push(mini('Opening debit', fmtMoney(d.openingDebit), 'var(--red)', 'Paid at entry'));
-    primary = primary.concat(touchCards());
+    var tc3 = touchCard(); if (tc3) primary.push(tc3);
     if (d.creditCapturePct != null) primary.push(mini('Credit capture', d.creditCapturePct + '%', d.creditCapturePct >= 60 ? 'var(--green)' : 'var(--yellow)', 'If it moves away from body'));
     if (d.wingRatioLabel) primary.push(mini('Wing ratio', d.wingRatioLabel, 'var(--text)', 'Structure balance'));
   } else if (sg === 'long_call' || sg === 'long_put') {
-    if (d.profitTargets && d.profitTargets[0]) primary.push(mini('First target', '$' + d.profitTargets[0].targetPrice, 'var(--green)', d.profitTargets[0].label || 'Realistic target'));
-    primary = primary.concat(touchCards());
+    var tc4 = touchCard(); if (tc4) primary.push(tc4);
   } else if (sg === 'iron_condor' || sg === 'iron_butterfly') {
     if (width != null) primary.push(mini('Wing width', fmtMoneyCents(width), 'var(--text)', 'Outer defined risk'));
-    primary = primary.concat(touchCards());
+    var tc5 = touchCard(); if (tc5) primary.push(tc5);
   } else {
-    primary = primary.concat(touchCards());
+    var tc6 = touchCard(); if (tc6) primary.push(tc6);
   }
 
   if (!primary.length && d.exitSignal) primary.push(mini('Exit trigger', '$' + d.exitSignal, 'var(--yellow)', 'Suggested risk line'));
@@ -705,13 +773,10 @@ function renderLongTargets(d) {
     '<div class="analysis-panel-label" style="margin-bottom:10px">Realistic Targets</div>' +
     '<div style="display:grid;gap:6px">' +
       d.profitTargets.map(function(t) {
-        var probPct = t.prob != null ? Math.round(t.prob * 100) : null;
-        var touchPct = t.probTouch != null ? Math.round(t.probTouch * 100) : null;
         var profitDollars = safeNum(t.profitDollars != null ? t.profitDollars : t.profit * 100);
-        return '<div style="display:grid;grid-template-columns:1fr auto auto;gap:10px;align-items:center;padding:8px 10px;background:var(--surface2);border:1px solid var(--border);border-radius:8px">' +
+        return '<div style="display:grid;grid-template-columns:1fr auto;gap:10px;align-items:center;padding:8px 10px;background:var(--surface2);border:1px solid var(--border);border-radius:8px">' +
           '<div><strong style="font-size:12px;color:var(--text)">' + (t.label || ('+$' + profitDollars.toFixed(0))) + '</strong><span style="font-size:10px;color:var(--text3);margin-left:8px">$' + t.targetPrice + '</span></div>' +
           '<div style="font-family:var(--mono);font-size:12px;color:' + (profitDollars > 0 ? 'var(--green)' : 'var(--text2)') + '">' + (profitDollars > 0 ? '+$' : '$') + profitDollars.toFixed(0) + '</div>' +
-          '<div style="font-family:var(--mono);font-size:10px;color:var(--text3);text-align:right">' + (probPct != null ? 'Exp ' + probPct + '%' : '') + (touchPct != null ? ' / Touch ' + touchPct + '%' : '') + '</div>' +
         '</div>';
       }).join('') +
     '</div>' +

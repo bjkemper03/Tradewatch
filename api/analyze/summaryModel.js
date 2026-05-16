@@ -170,9 +170,12 @@ function buildUniversalMetrics(result) {
   const sg = result.strategyGroup || '';
   const cushion = result.cushionPct ?? result.minCushionPct ?? result.beCushionPct ?? null;
   const probWorthless = result.probWorthless ?? result.probMaxProfit ?? null;
-  const theta = result.dailyThetaDollars ??
+  let theta = result.dailyThetaDollars ??
     (result.dailyDecay != null ? result.dailyDecay * 100 : null) ??
     (result.greeks?.theta != null ? -result.greeks.theta * 100 : null);
+  const isDebit = result.entryType === 'debit' || sg === 'long_call' || sg === 'long_put' ||
+    sg === 'call_debit_spread' || sg === 'put_debit_spread';
+  if (theta != null) theta = isDebit ? -Math.abs(theta) : Math.abs(theta);
 
   return {
     cushionPct: cushion,
@@ -184,7 +187,7 @@ function buildUniversalMetrics(result) {
     probWorthless: probWorthless != null ? pct(probWorthless) : null,
     probWorthlessTone: sg === 'long_call' || sg === 'long_put' ? 'bad' : 'good',
     dailyTheta: theta != null ? Number(theta.toFixed(2)) : null,
-    dailyThetaTone: theta == null ? 'neutral' : theta >= 0 ? 'good' : 'bad',
+    dailyThetaTone: theta == null ? 'neutral' : isDebit ? 'bad' : 'good',
   };
 }
 
