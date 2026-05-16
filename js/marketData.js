@@ -71,9 +71,10 @@ async function fetchEarningsData(ticker) {
 // ---------------------------------------------------------------------------
 // Quote -- fetches from /api/quote (Tradier primary, Polygon fallback)
 // ---------------------------------------------------------------------------
-async function fetchQuote(ticker) {
+async function fetchQuote(ticker, force) {
+  if (force === undefined) force = false;
   var ck = CK.lp + ticker;
-  var c = gc(ck, TTL.lp);
+  var c = !force ? gc(ck, TTL.lp) : null;
   if (c) return c;
   try {
     var r = await fetch(API.quote + '?ticker=' + ticker, {
@@ -81,7 +82,7 @@ async function fetchQuote(ticker) {
     });
     var d = await r.json();
     if (d.ok) {
-      var result = { price: d.price, date: d.date };
+      var result = { price: d.price, date: d.date, source: d.source || null, fetchedAt: Date.now() };
       sc2(ck, result);
       return result;
     }

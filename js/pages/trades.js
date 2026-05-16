@@ -11,17 +11,153 @@ function jsArg(v) {
 // ---------------------------------------------------------------------------
 // Live price loader
 // ---------------------------------------------------------------------------
-async function loadLivePrices() {
+function cachedLiveQuote(ticker) {
+  try {
+    var c = JSON.parse(localStorage.getItem(CK.lp + ticker) || 'null');
+    if (c && Date.now() - c.ts < TTL.lp && c.data) {
+      return Object.assign({ fetchedAt: c.ts }, c.data);
+    }
+  } catch(e) {}
+  return null;
+}
+
+function hydrateLivePrices() {
+  trades.filter(function(t) { return t.status === 'OPEN'; }).forEach(function(t) {
+    if (livePrices[t.ticker] && livePrices[t.ticker].fetchedAt && Date.now() - livePrices[t.ticker].fetchedAt > TTL.lp) {
+      delete livePrices[t.ticker];
+    }
+    if (!livePrices[t.ticker]) {
+      var cached = cachedLiveQuote(t.ticker);
+      if (cached) livePrices[t.ticker] = cached;
+    }
+  });
+}
+
+async function loadLivePrices(force) {
+  if (force === undefined) force = false;
   var tickers = [];
   var seen = {};
   trades.filter(function(t) { return t.status === 'OPEN'; }).forEach(function(t) {
     if (!seen[t.ticker]) { seen[t.ticker] = true; tickers.push(t.ticker); }
   });
   for (var i = 0; i < tickers.length; i++) {
-    var p = await fetchQuote(tickers[i]);
-    if (p) livePrices[tickers[i]] = p;
+    var p = await fetchQuote(tickers[i], force);
+    if (p) livePrices[tickers[i]] = Object.assign({ fetchedAt: Date.now() }, p);
     await new Promise(function(r) { setTimeout(r, 500); });
   }
+}
+
+function liveQuoteAgeText() {
+  var times = Object.keys(livePrices).map(function(k) { return livePrices[k] && livePrices[k].fetchedAt; }).filter(Boolean);
+  if (!times.length) return '';
+  var newest = Math.max.apply(null, times);
+  var mins = Math.max(0, Math.round((Date.now() - newest) / 60000));
+  return mins < 1 ? 'just now' : mins + 'm ago';
+}
+
+function tradeAnalysis(t) {
+  return (t && t.analysis) || {};
+}
+
+function fmtSignedPct(v) {
+  if (v == null || !Number.isFinite(safeNum(v))) return 'N/A';
+  var n = safeNum(v);
+  return (n > 0 ? '+' : '') + n.toFixed(1) + '%';
+}
+
+function fmtTradeMoney(v, cents) {
+  if (v == null || !Number.isFinite(safeNum(v))) return 'N/A';
+  var n = safeNum(v);
+  return (n < 0 ? '-$' : '$') + Math.abs(n).toFixed(cents ? 2 : 0);
+}
+
+function trackingLineLabel(line) {
+  if (!line) return 'RISK LINE';
+  if (line.price != null) return line.label.toUpperCase() + ' $' + safeNum(line.price).toFixed(2);
+  if (line.put != null && line.call != null) {
+    return 'SHORTS $' + safeNum(line.put).toFixed(2) + ' / $' + safeNum(line.call).toFixed(2);
+  }
+  return line.label.toUpperCase();
+}
+
+function primaryLegType(t) {
+  var legs = t.legs || [];
+  var put = legs.find(function(l) { return l.t === 'PUT'; });
+  var call = legs.find(function(l) { return l.t === 'CALL'; });
+  return put ? 'PUT' : call ? 'CALL' : '';
+}
+
+function trackingLine(t) {
+  var a = tradeAnalysis(t);
+  var legs = t.legs || [];
+  var strat = t.strategy || '';
+  var isDebit = t.entryType === 'debit' || isDebitStrat(strat);
+  var sellPut = legs.find(function(l) { return l.a === 'SELL' && l.t === 'PUT'; });
+  var sellCall = legs.find(function(l) { return l.a === 'SELL' && l.t === 'CALL'; });
+  var sell = legs.find(function(l) { return l.a === 'SELL'; });
+  var buy = legs.find(function(l) { return l.a === 'BUY'; });
+  if (a.shortStrike != null) return { price: safeNum(a.shortStrike), label: 'short strike' };
+  if (a.shortPut != null && a.shortCall != null) {
+    return { price: null, label: 'short strikes', put: safeNum(a.shortPut), call: safeNum(a.shortCall) };
+  }
+  if (!isDebit && sellPut && sellCall) {
+    return { price: null, label: 'short strikes', put: safeNum(sellPut.s), call: safeNum(sellCall.s) };
+  }
+  if (!isDebit && sell && sell.s) return { price: safeNum(sell.s), label: 'short strike' };
+  if (a.breakeven != null) return { price: safeNum(a.breakeven), label: 'breakeven' };
+  if (t.breakeven != null) return { price: safeNum(t.breakeven), label: 'breakeven' };
+  if ((strat === 'LONG PUT' || strat === 'LONG CALL') && buy && buy.s) return { price: safeNum(buy.s), label: 'strike' };
+  return { price: null, label: 'risk line' };
+}
+
+function tradeTracking(t, curPx, hasLive) {
+  var line = trackingLine(t);
+  var strat = t.strategy || '';
+  var type = primaryLegType(t);
+  var isPut = type === 'PUT';
+  var isDebit = t.entryType === 'debit' || isDebitStrat(strat);
+  var val = null;
+  var context = 'Tracking unavailable until a risk line is known.';
+  var label = 'Distance';
+
+  if (line.put != null && line.call != null && curPx > 0) {
+    var putGap = (curPx - line.put) / curPx * 100;
+    var callGap = (line.call - curPx) / curPx * 100;
+    val = parseFloat(Math.min(putGap, callGap).toFixed(1));
+    context = val >= 0
+      ? 'Inside the short-strike range; closest side is the tested line.'
+      : 'Outside the short-strike range; trade needs price back inside.';
+  } else if (line.price != null && curPx > 0) {
+    var direction;
+    if (strat === 'CALL CREDIT SPREAD' || strat === 'COVERED CALL') direction = -1;
+    else if (strat === 'LONG CALL' || strat === 'CALL DEBIT SPREAD') direction = 1;
+    else if (strat === 'LONG PUT' || strat === 'PUT DEBIT SPREAD') direction = -1;
+    else direction = isPut ? 1 : -1;
+
+    val = direction > 0
+      ? parseFloat(((curPx - line.price) / curPx * 100).toFixed(1))
+      : parseFloat(((line.price - curPx) / curPx * 100).toFixed(1));
+
+    if (isDebit) {
+      context = val >= 0
+        ? 'Currently beyond ' + line.label + '; has room before the trade falls back under breakeven.'
+        : 'Needs about ' + Math.abs(val).toFixed(1) + '% move to reach ' + line.label + '; until then, debit trades still carry full-premium loss risk.';
+    } else {
+      context = val >= 0
+        ? 'Price is on the favorable side of the tested line.'
+        : 'Price is through the tested line; needs to move back out or loss risk grows.';
+    }
+  }
+
+  var dte = t.currentDTE;
+  var status;
+  if (val == null) status = { label:'TRACK', color:'var(--text3)', cls:'warn' };
+  else if (dte != null && dte <= 5 && val < 2) status = { label:'TIME RISK', color:'#ef4444', cls:'risk' };
+  else if (val >= prefs.cushionMin + 2) status = { label:'ON TRACK', color:'#22c55e', cls:'safe' };
+  else if (val >= 0) status = { label:'MONITOR', color:'#f59e0b', cls:'warn' };
+  else status = { label: isDebit ? 'NEEDS MOVE' : 'AT RISK', color:'#ef4444', cls:'risk' };
+
+  return { value: val, label: label, context: context, line: line, status: status, hasLive: hasLive };
 }
 
 // ---------------------------------------------------------------------------
@@ -39,8 +175,10 @@ function renderTrades() {
     var d = parseExp(t.expDate);
     if (d) t.currentDTE = Math.max(0, Math.ceil((d - today) / 86400000));
   });
+  hydrateLivePrices();
 
   var hasLive = Object.keys(livePrices).length > 0;
+  var liveAge = liveQuoteAgeText();
 
   // ── Header ────────────────────────────────────────────────────────────────
   var html = '<div class="fadeup">' +
@@ -81,9 +219,11 @@ function renderTrades() {
   '</div></div>';
 
   // ── Live price loader prompt ───────────────────────────────────────────────
-  if (!hasLive && open.length > 0) {
-    html += '<div style="margin:0 12px 8px;padding:9px 12px;background:var(--blue-dim);border:1px solid rgba(99,102,241,.25);border-radius:8px;font-size:11px;color:var(--blue2);cursor:pointer" onclick="loadLivePrices().then(renderTrades)">' +
-      '&rarr; Load live prices for open positions</div>';
+  if (open.length > 0) {
+    html += '<div style="margin:0 12px 8px;padding:9px 12px;background:var(--blue-dim);border:1px solid rgba(99,102,241,.25);border-radius:8px;font-size:11px;color:var(--blue2);cursor:pointer;display:flex;justify-content:space-between;gap:10px;align-items:center" onclick="loadLivePrices(true).then(renderTrades)">' +
+      '<span>&rarr; ' + (hasLive ? 'Refresh' : 'Load') + ' live stock prices</span>' +
+      (liveAge ? '<span style="font-family:var(--mono);color:var(--text3)">as of ' + liveAge + '</span>' : '') +
+    '</div>';
   }
 
   // ── Empty state ───────────────────────────────────────────────────────────
@@ -99,11 +239,8 @@ function renderTrades() {
     var lp         = livePrices[t.ticker];
     var curPx      = (lp && lp.price) || safeNum(t.stockAtOpen);
     var priceLabel = lp ? ('$' + curPx + ' live') : (t.stockAtOpen ? '$' + t.stockAtOpen + ' open' : null);
-    var be         = safeNum(t.breakeven);
-    var liveCushion = curPx > 0 && be > 0
-      ? calcTradeCushion(t, curPx, be)
-      : safeNum(t.cushionPct);
-    var assess  = assessTrade(liveCushion, dte);
+    var track = tradeTracking(t, curPx, !!lp);
+    var assess = track.status;
     var pnl     = safeNum(t.currentPnlPct);
     var sector  = TICKER_SECTOR[t.ticker] || null;
     var tags    = t.tags || [];
@@ -125,10 +262,10 @@ function renderTrades() {
         '<div style="text-align:right;display:flex;align-items:center;gap:10px;flex-shrink:0">' +
           '<div>' +
           '<div style="font-family:var(--mono);font-size:16px;font-weight:700;color:' +
-            (liveCushion >= prefs.cushionMin + 2 ? 'var(--green)' : liveCushion >= prefs.cushionMin ? 'var(--yellow)' : 'var(--red)') +
-          '">' + liveCushion + '%</div>' +
-          '<div style="font-size:9px;color:var(--text3)">cushion' + (lp ? ' live' : '') + '</div>' +
-          '<div style="font-size:10px;color:var(--text2);font-family:var(--mono)">BE $' + (t.breakeven || '?') + '</div>' +
+            assess.color +
+          '">' + fmtSignedPct(track.value) + '</div>' +
+          '<div style="font-size:9px;color:var(--text3)">' + track.label.toLowerCase() + (lp ? ' live' : '') + '</div>' +
+          '<div style="font-size:10px;color:var(--text2);font-family:var(--mono)">' + trackingLineLabel(track.line) + '</div>' +
           '</div>' +
           '<div style="font-size:16px;color:var(--text3);line-height:1">' + (expanded ? '&#9650;' : '&#9660;') + '</div>' +
         '</div>' +
@@ -139,11 +276,7 @@ function renderTrades() {
           return '<span class="lb ' + (l.a === 'SELL' ? 'lb-sell' : 'lb-buy') + '">' + l.a + ' ' + l.n + '&times; $' + l.s + ' ' + l.t + '</span>';
         }).join('') +
       '</div>' +
-      g3html([
-        mc2('Price',      priceLabel || 'N/A',              lp ? 'var(--green)' : 'var(--text)'),
-        mc2('Entry/shr', '$' + (t.creditReceived || '?'),  t.entryType === 'debit' ? 'var(--red)' : 'var(--green)'),
-        mc2('Collateral', '$' + (t.maxRisk || '?'),         'var(--text)')
-      ]) +
+      renderOpenTradeDetails(t, priceLabel, lp, track) +
       (tags.length > 0
         ? '<div style="margin-bottom:8px">' +
             tags.map(function(tg) {
@@ -236,6 +369,62 @@ function renderTrades() {
 function toggleTradeDetails(id) {
   expandedTradeCards[id] = !expandedTradeCards[id];
   renderTrades();
+}
+
+function renderTradePayoffShape(t) {
+  var a = tradeAnalysis(t);
+  if (!a.payoff || !a.payoff.points || !a.payoff.points.length) return '';
+  var points = a.payoff.points;
+  var low = safeNum(a.payoff.low, points[0].px);
+  var high = safeNum(a.payoff.high, points[points.length - 1].px);
+  var minY = Math.min.apply(null, points.map(function(p) { return p.pnl; }).concat([0]));
+  var maxY = Math.max.apply(null, points.map(function(p) { return p.pnl; }).concat([0]));
+  if (minY === maxY) { minY -= 100; maxY += 100; }
+  if (low === high) { low -= 1; high += 1; }
+  var w = 360, h = 92, pad = 12;
+  function x(p) { return pad + (p.px - low) / (high - low) * (w - pad * 2); }
+  function y(v) { return h - pad - (v - minY) / (maxY - minY) * (h - pad * 2); }
+  var line = points.map(function(p) { return x(p).toFixed(1) + ',' + y(p.pnl).toFixed(1); }).join(' ');
+  var zeroY = y(0);
+  return '<details class="card" style="padding:10px 12px;margin-bottom:10px">' +
+    '<summary style="cursor:pointer;font-size:10px;color:var(--text3);font-weight:700;text-transform:uppercase;letter-spacing:.5px">Entry payoff shape</summary>' +
+    '<svg viewBox="0 0 ' + w + ' ' + h + '" style="width:100%;height:112px;display:block;background:var(--surface2);border:1px solid var(--border);border-radius:8px;margin-top:9px">' +
+      '<line x1="' + pad + '" y1="' + zeroY.toFixed(1) + '" x2="' + (w - pad) + '" y2="' + zeroY.toFixed(1) + '" stroke="var(--border2)" stroke-width="1"/>' +
+      '<polyline points="' + line + '" fill="none" stroke="var(--green)" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>' +
+    '</svg>' +
+    '<div style="display:flex;justify-content:space-between;font-size:10px;color:var(--text3);font-family:var(--mono);margin-top:5px"><span>$' + low.toFixed(0) + '</span><span>$' + high.toFixed(0) + '</span></div>' +
+  '</details>';
+}
+
+function renderOpenTradeDetails(t, priceLabel, lp, track) {
+  var a = tradeAnalysis(t);
+  var signal = a.signal || '';
+  var issues = a.issues || [];
+  var maxProfit = a.maxProfitUnlimited ? 'Unlimited' : fmtTradeMoney(a.maxProfit, false);
+  var maxLoss = a.maxLossUnlimited ? 'Unlimited' : fmtTradeMoney(a.maxLoss ?? t.maxRisk, false);
+  var entryTone = t.entryType === 'debit' ? 'var(--red)' : 'var(--green)';
+  var entryLabel = t.entryType === 'debit' ? 'Debit/shr' : 'Credit/shr';
+  var detail = g3html([
+    mc2('Stock', priceLabel || 'N/A', lp ? 'var(--green)' : 'var(--text)'),
+    mc2(entryLabel, '$' + (t.creditReceived || '?'), entryTone),
+    mc2('Max Risk', maxLoss, 'var(--red)')
+  ]);
+  detail += g3html([
+    mc2('Breakeven', t.breakeven != null ? '$' + safeNum(t.breakeven).toFixed(2) : 'N/A', 'var(--text)'),
+    mc2('Max Profit', maxProfit, 'var(--green)'),
+    mc2('Entry Signal', signal || 'N/A', signal === 'GO' ? 'var(--green)' : signal === 'NO-GO' ? 'var(--red)' : 'var(--yellow)')
+  ]);
+  detail += '<div style="font-size:11px;color:var(--text2);line-height:1.45;margin:-2px 0 10px;padding:8px 10px;background:var(--surface2);border:1px solid var(--border);border-radius:8px">' + esc(track.context) + '</div>';
+  if (issues.length) {
+    detail += '<div style="display:grid;gap:5px;margin-bottom:10px">' +
+      issues.slice(0, 3).map(function(i) {
+        var col = i.level === 'critical' ? 'var(--red)' : i.level === 'warning' ? 'var(--yellow)' : 'var(--text2)';
+        return '<div style="font-size:10px;color:' + col + ';line-height:1.4">' + esc(i.msg) + '</div>';
+      }).join('') +
+    '</div>';
+  }
+  detail += renderTradePayoffShape(t);
+  return detail;
 }
 
 // ---------------------------------------------------------------------------
@@ -351,7 +540,7 @@ function toggleTradeForm() {
   var f    = $('tfm');
   var show = f.style.display === 'none';
   f.style.display = show ? 'block' : 'none';
-  if (show) { selectedTags = []; buildLegs(); }
+  if (show) { selectedTags = []; pendingAnalysisForLog = null; buildLegs(); }
 }
 
 // ---------------------------------------------------------------------------
@@ -384,6 +573,8 @@ async function submitTrade() {
   var cushionVal = (stock > 0 && be) ? calcTradeCushion({ strategy: formStrat }, stock, be) : null;
   var dte        = calcDTE(expRaw);
   var sector     = TICKER_SECTOR[ticker] || null;
+  var analysisSnapshot = pendingAnalysisForLog ? JSON.parse(JSON.stringify(pendingAnalysisForLog)) : null;
+  pendingAnalysisForLog = null;
 
   var newTrade = {
     id:             Date.now(),
@@ -405,7 +596,8 @@ async function submitTrade() {
     currentPnlPct:  '',
     closeReason:    '',
     tags:           selectedTags.slice(),
-    sector:         sector
+    sector:         sector,
+    analysis:       analysisSnapshot
   };
 
   trades.unshift(newTrade);
@@ -496,6 +688,7 @@ async function delT(id) {
 // ---------------------------------------------------------------------------
 function logFromAnalysis() {
   if (!azResult) return;
+  pendingAnalysisForLog = azResult.analysis ? JSON.parse(JSON.stringify(azResult.analysis)) : null;
   formStrat   = azResult.strategy || 'PUT CREDIT SPREAD';
   formLegData = azResult.legs || DEF[formStrat].map(function(l) { return Object.assign({}, l); });
   showPage('trades');

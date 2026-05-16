@@ -32,7 +32,7 @@ let _sbClient = null;
 let currentUser = null;
 
 let trades = [], hist = {...DEFAULT_HIST}, prefs = {...DEFAULT_PREFS};
-let azLegData = [], azStrat = 'PUT CREDIT SPREAD', azResult = null;
+let azLegData = [], azStrat = 'PUT CREDIT SPREAD', azResult = null, lastAnalysisResult = null, pendingAnalysisForLog = null;
 let formLegData = [], formStrat = 'PUT CREDIT SPREAD';
 let selectedTags = [], showHistory = false, livePrices = {}, tradesTab = 'All', tradesExpanded = false;
 

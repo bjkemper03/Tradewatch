@@ -12,8 +12,11 @@ var payoffShapeData = null;
 // ---------------------------------------------------------------------------
 function renderAnalyze() {
   var el = $('page-analyze');
-  azLegData = DEF['PUT CREDIT SPREAD'].map(function(l) { return Object.assign({}, l); });
-  azStrat   = 'PUT CREDIT SPREAD';
+  var remembered = lastAnalysisResult || null;
+  azStrat = (remembered && (remembered.selectedStrategy || remembered.strategy)) || 'PUT CREDIT SPREAD';
+  azLegData = remembered && remembered.legs && remembered.legs.length
+    ? remembered.legs.map(function(l) { return Object.assign({}, l); })
+    : DEF['PUT CREDIT SPREAD'].map(function(l) { return Object.assign({}, l); });
 
   el.innerHTML = '<div class="fadeup"><div style="padding:0 12px 10px">' +
     '<div class="fg2">' +
@@ -59,6 +62,16 @@ function renderAnalyze() {
   '</div><div id="az-result" style="margin-top:4px"></div></div>';
 
   buildAzLegs();
+  if ($('az-strat')) $('az-strat').value = azStrat;
+  if (remembered) {
+    if ($('az-tk')) $('az-tk').value = remembered.ticker || '';
+    if ($('az-exp')) $('az-exp').value = remembered.expDate || remembered.exp || '';
+    if ($('az-cr')) $('az-cr').value = remembered.entryPremium != null ? remembered.entryPremium : remembered.credit || '';
+    if ($('az-entry')) $('az-entry').value = remembered.entryType || (isDebitStrat(azStrat) ? 'debit' : 'credit');
+    if ($('az-ctx')) $('az-ctx').value = remembered.notes || '';
+    azUpdateCol();
+    renderAnalysisResult(remembered);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -161,6 +174,8 @@ async function runAnalysis() {
 
     d.legs = azLegData.map(function(l) { return Object.assign({}, l); });
     d.entryPremium = credit;
+    d.notes = $('az-ctx') ? $('az-ctx').value.trim() : '';
+    lastAnalysisResult = JSON.parse(JSON.stringify(d));
 
     // Store for log-from-analysis
     azResult = {
@@ -196,6 +211,7 @@ async function runAnalysis() {
       notes:         $('az-ctx') ? $('az-ctx').value.trim() : '',
       issues:        d.issues        || []
     };
+    azResult.analysis = JSON.parse(JSON.stringify(d));
 
     renderAnalysisResult(d);
 
