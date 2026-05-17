@@ -195,6 +195,3 @@ async function delT(id) {
     renderTrades();
   }
 }
-
-// ---------------------------------------------------------------------------
-// Log from analysis

@@ -127,6 +127,3 @@ function toggleTag(i, tag) {
   var btn = $('ttag-' + i);
   if (btn) btn.classList.toggle('on', selectedTags.includes(tag));
 }
-
-// ---------------------------------------------------------------------------
-// Submit new trade
