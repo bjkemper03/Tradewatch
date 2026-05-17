@@ -47,8 +47,14 @@ async function loadLivePrices(force) {
   }
 }
 
-function liveQuoteAgeText() {
-  var times = Object.keys(livePrices).map(function(k) { return livePrices[k] && livePrices[k].fetchedAt; }).filter(Boolean);
+function openLiveQuotes(openTrades) {
+  var tickers = {};
+  (openTrades || []).forEach(function(t) { tickers[t.ticker] = true; });
+  return Object.keys(tickers).map(function(k) { return livePrices[k]; }).filter(Boolean);
+}
+
+function liveQuoteAgeText(openTrades) {
+  var times = openLiveQuotes(openTrades).map(function(q) { return q && q.fetchedAt; }).filter(Boolean);
   if (!times.length) return '';
   var newest = Math.max.apply(null, times);
   var mins = Math.max(0, Math.round((Date.now() - newest) / 60000));
@@ -80,6 +86,16 @@ function trackingLineLabel(line) {
   return line.label.toUpperCase();
 }
 
+function trackingMetricLabel(strat, line, isDebit) {
+  if (line && line.put != null && line.call != null) return 'Distance to tested side';
+  if (line && line.label === 'short strike') {
+    if (strat === 'CALL CREDIT SPREAD' || strat === 'COVERED CALL') return 'Distance to short call';
+    return 'Cushion to short put';
+  }
+  if (isDebit || (line && line.label === 'breakeven')) return 'Distance to breakeven';
+  return 'Distance to risk line';
+}
+
 function primaryLegType(t) {
   var legs = t.legs || [];
   var put = legs.find(function(l) { return l.t === 'PUT'; });
@@ -96,6 +112,8 @@ function trackingLine(t) {
   var sellCall = legs.find(function(l) { return l.a === 'SELL' && l.t === 'CALL'; });
   var sell = legs.find(function(l) { return l.a === 'SELL'; });
   var buy = legs.find(function(l) { return l.a === 'BUY'; });
+  if (isDebit && a.breakeven != null) return { price: safeNum(a.breakeven), label: 'breakeven' };
+  if (isDebit && t.breakeven != null) return { price: safeNum(t.breakeven), label: 'breakeven' };
   if (a.shortStrike != null) return { price: safeNum(a.shortStrike), label: 'short strike' };
   if (a.shortPut != null && a.shortCall != null) {
     return { price: null, label: 'short strikes', put: safeNum(a.shortPut), call: safeNum(a.shortCall) };
@@ -118,14 +136,14 @@ function tradeTracking(t, curPx, hasLive) {
   var isDebit = t.entryType === 'debit' || isDebitStrat(strat);
   var val = null;
   var context = 'Tracking unavailable until a risk line is known.';
-  var label = 'Distance';
+  var label = trackingMetricLabel(strat, line, isDebit);
 
   if (line.put != null && line.call != null && curPx > 0) {
     var putGap = (curPx - line.put) / curPx * 100;
     var callGap = (line.call - curPx) / curPx * 100;
     val = parseFloat(Math.min(putGap, callGap).toFixed(1));
     context = val >= 0
-      ? 'Inside the short-strike range; closest side is the tested line.'
+      ? 'Inside the short-strike range; closest side is the tested side.'
       : 'Outside the short-strike range; trade needs price back inside.';
   } else if (line.price != null && curPx > 0) {
     var direction;
@@ -177,8 +195,8 @@ function renderTrades() {
   });
   hydrateLivePrices();
 
-  var hasLive = Object.keys(livePrices).length > 0;
-  var liveAge = liveQuoteAgeText();
+  var hasLive = openLiveQuotes(open).length > 0;
+  var liveAge = liveQuoteAgeText(open);
 
   // ── Header ────────────────────────────────────────────────────────────────
   var html = '<div class="fadeup">' +
@@ -414,7 +432,10 @@ function renderOpenTradeDetails(t, priceLabel, lp, track) {
     mc2('Max Profit', maxProfit, 'var(--green)'),
     mc2('Entry Signal', signal || 'N/A', signal === 'GO' ? 'var(--green)' : signal === 'NO-GO' ? 'var(--red)' : 'var(--yellow)')
   ]);
-  detail += '<div style="font-size:11px;color:var(--text2);line-height:1.45;margin:-2px 0 10px;padding:8px 10px;background:var(--surface2);border:1px solid var(--border);border-radius:8px">' + esc(track.context) + '</div>';
+  detail += '<div style="font-size:11px;color:var(--text2);line-height:1.45;margin:-2px 0 10px;padding:8px 10px;background:var(--surface2);border:1px solid var(--border);border-radius:8px">' +
+    '<div style="color:var(--text);margin-bottom:3px">Tracking stock price against the trade risk line, not broker spread marks.</div>' +
+    esc(track.context) +
+  '</div>';
   if (issues.length) {
     detail += '<div style="display:grid;gap:5px;margin-bottom:10px">' +
       issues.slice(0, 3).map(function(i) {
@@ -650,6 +671,16 @@ function estimateRealizedPnl(t) {
 async function closeT(id, r) {
   var t = trades.find(function(t) { return t.id === id; });
   if (t) {
+    if (t.currentPnlPct == null || t.currentPnlPct === '') {
+      var entered = prompt('Enter realized P/L % before closing this trade.');
+      if (entered === null) return;
+      entered = entered.trim();
+      if (entered === '' || !Number.isFinite(safeNum(entered, NaN))) {
+        toast('Close canceled. Enter a valid P/L %.');
+        return;
+      }
+      t.currentPnlPct = entered;
+    }
     t.status      = 'CLOSED';
     t.closeReason = r;
     t.closeDate   = new Date().toISOString().slice(0, 10);
