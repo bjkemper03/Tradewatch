@@ -116,6 +116,3 @@ function azUpdateCol() {
   var el  = $('az-col');
   if (el) el.value = col > 0 ? col.toFixed(0) : '';
 }
-
-// ---------------------------------------------------------------------------
-// Run analysis -- calls backend, stores result, renders output
