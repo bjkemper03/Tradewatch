@@ -259,11 +259,14 @@ function fmtAsOf(v) {
 
 function renderModelNotes(d) {
   var notes = d.modelNotes || [];
-  if (!notes.length) return '';
+  var greekNote = {
+    level: 'model',
+    msg: 'Greeks shown are estimated net position Greeks for the full trade when possible. Delta detail lists key leg deltas used for trade selection and risk context.'
+  };
   return '<details class="card" style="padding:10px 12px">' +
     '<summary style="cursor:pointer;font-size:10px;color:var(--text3);font-weight:700;text-transform:uppercase;letter-spacing:.5px">Model assumptions</summary>' +
     '<div style="display:grid;gap:6px;margin-top:9px">' +
-    notes.slice(0, 5).map(function(n) {
+    [greekNote].concat(notes).slice(0, 6).map(function(n) {
       var isWeak = n.level === 'weak';
       return '<div style="display:flex;align-items:flex-start;gap:7px;font-size:10px;line-height:1.45;color:var(--text2)">' +
         '<strong style="font-size:9px;text-transform:uppercase;letter-spacing:.4px">' + (isWeak ? 'Weak estimate' : 'Model') + '</strong>' +

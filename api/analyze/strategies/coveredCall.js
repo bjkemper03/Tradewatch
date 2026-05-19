@@ -48,7 +48,7 @@ export function analyzeCoveredCall(data, legs, expDateObj, dte, credit, prefs) {
   const payoff        = payoffSummary(legs, cr, price, [
     { label: 'Call strike', px: strike, note: 'Called away above here', kind: 'short' },
     { label: 'Stock $0', px: 0, note: 'Theoretical downside endpoint', kind: 'loss' },
-  ], { underlyingShares: 100, underlyingBasis: price });
+  ], { underlyingShares: 100 * callQty, underlyingBasis: price });
   const maxProfit     = payoff.maxProfit;
   const maxLoss       = payoff.maxLoss;
   const downsideProtection = cr; // premium reduces cost basis
