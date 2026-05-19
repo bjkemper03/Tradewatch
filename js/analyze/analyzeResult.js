@@ -27,6 +27,13 @@ function toneColor(tone) {
   return 'var(--text)';
 }
 
+function issueColor(issue) {
+  if (!issue) return 'var(--green)';
+  if (issue.level === 'red' || issue.level === 'critical') return 'var(--red)';
+  if (issue.level === 'info' || issue.level === 'note') return 'var(--text2)';
+  return 'var(--yellow)';
+}
+
 
 function fmtMoney(v) {
   if (v == null || !Number.isFinite(safeNum(v))) return 'N/A';
@@ -223,8 +230,8 @@ function renderModelNotes(d) {
 
 function renderAnalysisResult(d) {
   var sig      = d.signal || 'GO';
-  var sc       = sig === 'GO' ? '#22c55e' : sig === 'NO-GO' ? '#ef4444' : '#f59e0b';
-  var sigLabel = sig === 'GO' ? 'GO' : sig === 'NO-GO' ? 'NO-GO' : 'CAUTION';
+  var sc       = sig === 'GO' ? '#22c55e' : sig === 'NO-GO' ? '#ef4444' : sig === 'INCOMPLETE' ? '#94a3b8' : '#f59e0b';
+  var sigLabel = sig === 'GO' ? 'GO' : sig === 'NO-GO' ? 'NO-GO' : sig === 'INCOMPLETE' ? 'INCOMPLETE' : 'CAUTION';
   var issues   = d.issues || [];
   var reasons  = issues.length ? issues.map(function(i) { return i.msg; }) : ['All checks passed -- structure looks solid'];
 
@@ -237,7 +244,7 @@ function renderAnalysisResult(d) {
         '<div class="analysis-sub">' +
           reasons.map(function(r) {
             var ic = issues.find(function(i) { return i.msg === r; });
-            var col = ic ? (ic.level === 'critical' ? 'var(--red)' : ic.level === 'note' ? 'var(--text2)' : 'var(--yellow)') : 'var(--green)';
+            var col = issueColor(ic);
             return '<span style="color:' + col + '">' + r + '</span>';
           }).join('<br>') +
         '</div>' +

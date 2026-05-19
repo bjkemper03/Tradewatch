@@ -7,6 +7,7 @@
 import { fetchAllData } from './dataFetch.js';
 import { applyApiHeaders, checkRateLimit, cleanTicker, handleOptions } from '../_security.js';
 import { buildAnalysisSummary } from './summaryModel.js';
+import { legacyIssue, sortIssues } from './signalModel.js';
 import {
   analyzeCreditSpread,
   analyzeIronCondor,
@@ -183,25 +184,35 @@ function applySummaryRisk(result, summary) {
   const issues = Array.isArray(result.issues) ? [...result.issues] : [];
   const liq = summary?.liquidity;
   if (liq?.grade === 'Poor') {
-    issues.push({
-      level: 'critical',
-      weight: 5,
-      msg: 'Poor option liquidity -- bid/ask and fills may make entry or exit unsafe',
-    });
+    issues.push(legacyIssue({
+      id: 'liquidity_poor_note',
+      level: 'info',
+      category: 'liquidity',
+      scope: 'context',
+      affectsSignal: false,
+      message: 'Liquidity looks poor from quotes -- confirm bid/ask and fills before entry',
+    }));
   } else if (liq?.grade === 'Thin') {
-    issues.push({
-      level: 'warning',
-      weight: 3,
-      msg: 'Thin option liquidity -- use limit orders and confirm fills',
-    });
+    issues.push(legacyIssue({
+      id: 'liquidity_thin_note',
+      level: 'info',
+      category: 'liquidity',
+      scope: 'context',
+      affectsSignal: false,
+      message: 'Thin option liquidity -- use limit orders and confirm fills',
+    }));
+  } else if (liq?.grade === 'Unknown') {
+    issues.push(legacyIssue({
+      id: 'liquidity_unknown_note',
+      level: 'info',
+      category: 'liquidity',
+      scope: 'context',
+      affectsSignal: false,
+      message: 'Liquidity data unavailable -- confirm bid/ask before entry',
+    }));
   }
 
-  result.issues = issues;
-  if (issues.some(i => i.level === 'critical')) {
-    result.signal = 'NO-GO';
-  } else if (issues.some(i => i.level === 'warning') && result.signal === 'GO') {
-    result.signal = 'CAUTION';
-  }
+  result.issues = sortIssues(issues).map(legacyIssue);
   return result;
 }
 
