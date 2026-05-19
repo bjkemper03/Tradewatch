@@ -9,95 +9,95 @@ import { bsDelta, getBestVol } from './sharedGreeks.js';
 import { payoffSummary, firstBreakeven } from './sharedPayoff.js';
 import { checkEarningsRisk, finalizeUniversalSignal, modelNotes } from './sharedContext.js';
 
-export function analyzeCreditSpread(data, legs, expDateObj, dte, credit, prefs) {
-  const { price, hv30, supports, resistances, earnings, chain } = data;
-  const cr = safeNum(credit);
-
-  // Identify legs
-  const sellLeg = legs.find(l => l.a === 'SELL');
-  const buyLeg  = legs.find(l => l.a === 'BUY');
-  if (!sellLeg || !buyLeg) return { error: 'Credit spread requires one SELL and one BUY leg' };
-
-  const shortStrike = safeNum(sellLeg.s);
-  const longStrike  = safeNum(buyLeg.s);
-  const optType     = (sellLeg.t || 'PUT').toLowerCase();
-  const isPut       = optType === 'put';
-
-  if (String(buyLeg.t || '').toUpperCase() !== String(sellLeg.t || '').toUpperCase()) {
-    return { error: 'Credit spread legs must use the same option type' };
-  }
-  if (!shortStrike || !longStrike) return { error: 'Enter strike prices for both legs' };
-
-  const spreadWidth = Math.abs(shortStrike - longStrike);
-  if (spreadWidth === 0) return { error: 'Short and long strikes cannot be the same' };
-
-  // Greeks from chain
-  const contract = findChainContract(chain, shortStrike, optType);
-  const greeks   = extractGreeks(contract);
-  const vol      = getBestVol(greeks, hv30);
-
-  // Delta -- real from chain or Black-Scholes
-  let absDelta = null, deltaSource = 'BS';
-  if (greeks && greeks.delta != null) {
-    absDelta = Math.abs(greeks.delta);
-    deltaSource = 'Tradier';
-  } else if (shortStrike && price && dte) {
-    const bd = bsDelta(price, shortStrike, dte / 365, vol, optType);
-    if (bd !== null) absDelta = Math.abs(bd);
-  }
-
-  // Core metrics
-  const payoff = payoffSummary(legs, cr, price, [
-    { label: 'Short strike', px: shortStrike, note: 'Max profit starts beyond here', kind: 'short' },
-    { label: 'Long strike', px: longStrike, note: 'Max loss starts beyond here', kind: 'loss' },
-  ]);
-  const maxProfit = payoff.maxProfit;
-  const maxLoss = payoff.maxLoss;
-  const breakeven = firstBreakeven(payoff, isPut
-    ? parseFloat((shortStrike - cr).toFixed(2))
-    : parseFloat((shortStrike + cr).toFixed(2)));
-
-  // Cushion = distance from current price to short strike
-  const cushionPct = isPut
-    ? parseFloat(((price - shortStrike) / price * 100).toFixed(1))
-    : parseFloat(((shortStrike - price) / price * 100).toFixed(1));
-
-  // Breakeven cushion = distance from price to breakeven
-  const beCushionPct = isPut
-    ? parseFloat(((price - breakeven) / price * 100).toFixed(1))
-    : parseFloat(((breakeven - price) / price * 100).toFixed(1));
-
-  // Credit as % of spread width (quality metric)
-  const crWidthPct = parseFloat((cr / spreadWidth * 100).toFixed(1));
-
-  // Expected move
-  const em = calcExpectedMove(price, vol, dte);
-  const strikeOutsideEM = em
-    ? (isPut ? (price - shortStrike) > em : (shortStrike - price) > em)
-    : null;
-
-  // Probability
-  const probs = calcCreditSpreadProbs(price, shortStrike, longStrike, vol, dte, optType, breakeven);
-  const pow   = calcPOW(price, shortStrike, vol, dte, optType);
-
-  // Support/resistance context
-  const nearestSupport    = supports.length    ? supports[0]    : null;
-  const nearestResistance = resistances.length ? resistances[0] : null;
-  const strikeAboveSupport = isPut && nearestSupport
-    ? shortStrike > nearestSupport
-    : null;
-
-  // Exit signal -- closest support below (for puts)
-  const exitSignal = isPut && supports.length ? supports[0] : null;
-
-  // Earnings
-  const earningsCheck = checkEarningsRisk(earnings, expDateObj);
-
-  // Issues
-  const issues = [];
-  const cushMin = prefs?.cushionMin || 5;
-  const dteMin  = prefs?.dteLow || 14;
-  const dteMax  = prefs?.dteHigh || 21;
+export function analyzeCreditSpread(data, legs, expDateObj, dte, credit, prefs) {
+  const { price, hv30, supports, resistances, earnings, chain } = data;
+  const cr = safeNum(credit);
+
+  // Identify legs
+  const sellLeg = legs.find(l => l.a === 'SELL');
+  const buyLeg  = legs.find(l => l.a === 'BUY');
+  if (!sellLeg || !buyLeg) return { error: 'Credit spread requires one SELL and one BUY leg' };
+
+  const shortStrike = safeNum(sellLeg.s);
+  const longStrike  = safeNum(buyLeg.s);
+  const optType     = (sellLeg.t || 'PUT').toLowerCase();
+  const isPut       = optType === 'put';
+
+  if (String(buyLeg.t || '').toUpperCase() !== String(sellLeg.t || '').toUpperCase()) {
+    return { error: 'Credit spread legs must use the same option type' };
+  }
+  if (!shortStrike || !longStrike) return { error: 'Enter strike prices for both legs' };
+
+  const spreadWidth = Math.abs(shortStrike - longStrike);
+  if (spreadWidth === 0) return { error: 'Short and long strikes cannot be the same' };
+
+  // Greeks from chain
+  const contract = findChainContract(chain, shortStrike, optType);
+  const greeks   = extractGreeks(contract);
+  const vol      = getBestVol(greeks, hv30);
+
+  // Delta -- real from chain or Black-Scholes
+  let absDelta = null, deltaSource = 'BS';
+  if (greeks && greeks.delta != null) {
+    absDelta = Math.abs(greeks.delta);
+    deltaSource = 'Tradier';
+  } else if (shortStrike && price && dte) {
+    const bd = bsDelta(price, shortStrike, dte / 365, vol, optType);
+    if (bd !== null) absDelta = Math.abs(bd);
+  }
+
+  // Core metrics
+  const payoff = payoffSummary(legs, cr, price, [
+    { label: 'Short strike', px: shortStrike, note: 'Max profit starts beyond here', kind: 'short' },
+    { label: 'Long strike', px: longStrike, note: 'Max loss starts beyond here', kind: 'loss' },
+  ]);
+  const maxProfit = payoff.maxProfit;
+  const maxLoss = payoff.maxLoss;
+  const breakeven = firstBreakeven(payoff, isPut
+    ? parseFloat((shortStrike - cr).toFixed(2))
+    : parseFloat((shortStrike + cr).toFixed(2)));
+
+  // Cushion = distance from current price to short strike
+  const cushionPct = isPut
+    ? parseFloat(((price - shortStrike) / price * 100).toFixed(1))
+    : parseFloat(((shortStrike - price) / price * 100).toFixed(1));
+
+  // Breakeven cushion = distance from price to breakeven
+  const beCushionPct = isPut
+    ? parseFloat(((price - breakeven) / price * 100).toFixed(1))
+    : parseFloat(((breakeven - price) / price * 100).toFixed(1));
+
+  // Credit as % of spread width (quality metric)
+  const crWidthPct = parseFloat((cr / spreadWidth * 100).toFixed(1));
+
+  // Expected move
+  const em = calcExpectedMove(price, vol, dte);
+  const strikeOutsideEM = em
+    ? (isPut ? (price - shortStrike) > em : (shortStrike - price) > em)
+    : null;
+
+  // Probability
+  const probs = calcCreditSpreadProbs(price, shortStrike, longStrike, vol, dte, optType, breakeven);
+  const pow   = calcPOW(price, shortStrike, vol, dte, optType);
+
+  // Support/resistance context
+  const nearestSupport    = supports.length    ? supports[0]    : null;
+  const nearestResistance = resistances.length ? resistances[0] : null;
+  const strikeAboveSupport = isPut && nearestSupport
+    ? shortStrike > nearestSupport
+    : null;
+
+  // Exit signal -- closest support below (for puts)
+  const exitSignal = isPut && supports.length ? supports[0] : null;
+
+  // Earnings
+  const earningsCheck = checkEarningsRisk(earnings, expDateObj);
+
+  // Issues
+  const issues = [];
+  const cushMin = prefs?.cushionMin || 5;
+  const dteMin  = prefs?.dteLow || 14;
+  const dteMax  = prefs?.dteHigh || 21;
   const crwMin  = prefs?.creditWidthMin || 8;
   const deltaMax = prefs?.deltaHigh || 0.30;
   const accountSize = safeNum(prefs?.accountSize || prefs?.startingAccountSize, null);
@@ -164,37 +164,37 @@ export function analyzeCreditSpread(data, legs, expDateObj, dte, credit, prefs) 
     strategyGroup: 'credit_spread',
     signal: decision.signal,
     issues: decision.issues,
-
-    // Core
-    price, shortStrike, longStrike, spreadWidth,
-    breakeven, cushionPct, beCushionPct, crWidthPct,
-    maxProfit, maxLoss,
-
-    // Greeks
-    absDelta, deltaSource,
-    greeks: greeks || null,
-    iv: greeks?.iv || null,
-    vol: pct(vol),
-
-    // Probability
-    probMaxProfit:   probs.probMaxProfit,
-    probAnyProfit:   probs.probAnyProfit,
-    probMaxLoss:     probs.probMaxLoss,
-    probWorthless:   pow,
-    probTouchShort:  probs.probTouchShort,
-    probTouchLong:   probs.probTouchLong,
-
-    // Move context
-    em, strikeOutsideEM,
-
-    // Levels
-    supports, resistances, nearestSupport, nearestResistance,
-    exitSignal, strikeAboveSupport,
-
-    // Earnings
-    earningsRisk: earningsCheck.risk,
-    earningsDate: earningsCheck.date,
-    modelNotes: modelNotes(data, { greeks }),
-    payoff,
-  };
+
+    // Core
+    price, shortStrike, longStrike, spreadWidth,
+    breakeven, cushionPct, beCushionPct, crWidthPct,
+    maxProfit, maxLoss,
+
+    // Greeks
+    absDelta, deltaSource,
+    greeks: greeks || null,
+    iv: greeks?.iv || null,
+    vol: pct(vol),
+
+    // Probability
+    probMaxProfit:   probs.probMaxProfit,
+    probAnyProfit:   probs.probAnyProfit,
+    probMaxLoss:     probs.probMaxLoss,
+    probWorthless:   pow,
+    probTouchShort:  probs.probTouchShort,
+    probTouchLong:   probs.probTouchLong,
+
+    // Move context
+    em, strikeOutsideEM,
+
+    // Levels
+    supports, resistances, nearestSupport, nearestResistance,
+    exitSignal, strikeAboveSupport,
+
+    // Earnings
+    earningsRisk: earningsCheck.risk,
+    earningsDate: earningsCheck.date,
+    modelNotes: modelNotes(data, { greeks }),
+    payoff,
+  };
 }
