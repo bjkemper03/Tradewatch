@@ -3,15 +3,17 @@
 // =============================================================================
 
 import { pct, safeNum } from './sharedMath.js';
+import { buildPositionGreeks } from './sharedGreeks.js';
 import { payoffSummary, firstBreakeven, riskFieldsFromPayoff } from './sharedPayoff.js';
 import { checkEarningsRisk, getSignal, modelNotes } from './sharedContext.js';
 
 export function analyzeCustomPayoff(data, legs, expDateObj, dte, credit, prefs, isCredit = true) {
-  const { price, hv30, supports, resistances, earnings } = data;
+  const { price, hv30, supports, resistances, earnings, chain } = data;
   const entry = safeNum(credit);
   const netPremiumPerShare = isCredit ? entry : -entry;
   const payoff = payoffSummary(legs, netPremiumPerShare, price);
   const earningsCheck = checkEarningsRisk(earnings, expDateObj);
+  const positionGreeks = buildPositionGreeks(chain, legs, hv30 || 0.30, price, dte);
   const issues = [];
 
   if (payoff.maxLossUnlimited) {
@@ -34,6 +36,9 @@ export function analyzeCustomPayoff(data, legs, expDateObj, dte, credit, prefs, 
     breakevens: payoff.breakevens,
     breakeven: firstBreakeven(payoff),
     ...riskFieldsFromPayoff(payoff),
+    positionGreeks,
+    keyLegGreeks: {},
+    scoringGreeks: {},
     vol: pct(hv30 || 0.30),
     supports,
     resistances,

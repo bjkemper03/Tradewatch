@@ -79,3 +79,84 @@ export function aggregateLegGreeks(chain, legs, fallbackVol, price, dte, optType
   totals.source = source;
   return totals;
 }
+
+function legQty(leg) {
+  return Math.max(1, safeNum(leg?.n || leg?.qty || 1, 1));
+}
+
+function roundGreekValue(value) {
+  return value == null || !Number.isFinite(value) ? null : parseFloat(value.toFixed(4));
+}
+
+function mergeGreekFallback(rawGreeks, fallbackGreeks) {
+  if (!rawGreeks && !fallbackGreeks) return null;
+  return {
+    ...(fallbackGreeks || {}),
+    ...(rawGreeks || {}),
+  };
+}
+
+export function getLegGreek(chain, leg, fallbackVol, price, dte, optTypeFallback) {
+  const strike = safeNum(leg?.s || leg?.strike);
+  const type = String(leg?.t || leg?.type || optTypeFallback || '').toLowerCase();
+  if (!strike || !type) return null;
+
+  const rawGreeks = extractGreeks(findChainContract(chain, strike, type));
+  const fallbackGreeks = bsGreekSet(price, strike, dte / 365, fallbackVol, type);
+  const greeks = mergeGreekFallback(rawGreeks, fallbackGreeks);
+  if (!greeks) return null;
+  const usedFallback = !rawGreeks || ['delta', 'gamma', 'theta', 'vega', 'rho'].some(k =>
+    rawGreeks[k] == null && fallbackGreeks?.[k] != null
+  );
+
+  return {
+    ...greeks,
+    delta: roundGreekValue(greeks.delta),
+    gamma: roundGreekValue(greeks.gamma),
+    theta: roundGreekValue(greeks.theta),
+    vega: roundGreekValue(greeks.vega),
+    rho: roundGreekValue(greeks.rho),
+    strike,
+    type,
+    action: String(leg?.a || leg?.action || '').toUpperCase(),
+    qty: legQty(leg),
+    source: rawGreeks && usedFallback ? 'Mixed' : rawGreeks ? 'Tradier' : 'BS',
+  };
+}
+
+export function buildPositionGreeks(chain, legs, fallbackVol, price, dte, optTypeFallback, opts = {}) {
+  const totals = { delta: 0, gamma: 0, theta: 0, vega: 0, rho: 0 };
+  const sources = new Set();
+  let found = false;
+
+  for (const leg of legs || []) {
+    const greek = getLegGreek(chain, leg, fallbackVol, price, dte, optTypeFallback);
+    if (!greek) continue;
+    const side = String(leg?.a || leg?.action || '').toUpperCase() === 'BUY' ? 1 : -1;
+    const qty = legQty(leg);
+    ['delta', 'gamma', 'theta', 'vega', 'rho'].forEach(k => {
+      if (greek[k] != null) {
+        totals[k] += side * qty * safeNum(greek[k]);
+        found = true;
+      }
+    });
+    sources.add(greek.source);
+  }
+
+  if (opts.sharesDelta) {
+    totals.delta += safeNum(opts.sharesDelta);
+    sources.add('Shares');
+    found = true;
+  }
+
+  if (!found) return null;
+  Object.keys(totals).forEach(k => { totals[k] = roundGreekValue(totals[k]); });
+  totals.source = sources.size > 1 ? 'Mixed' : [...sources][0] || 'Unknown';
+  return totals;
+}
+
+export function buildKeyLegGreeks(entries) {
+  return Object.fromEntries(
+    Object.entries(entries || {}).filter(([, value]) => value != null)
+  );
+}

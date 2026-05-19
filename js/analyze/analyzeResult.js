@@ -3,19 +3,66 @@
 // =============================================================================
 
 function renderGreekBox(d) {
-  var g = (d.summary && d.summary.greeks) || d.greeks || {};
+  var g = d.positionGreeks || (d.summary && d.summary.greeks) || d.greeks || {};
   var items = [
-    ['Delta', d.absDelta != null ? d.absDelta : g.delta],
+    ['Delta', g.delta != null ? g.delta : d.absDelta],
     ['Gamma', g.gamma],
     ['Theta', g.theta],
     ['Vega',  g.vega],
     ['Rho',   g.rho]
   ];
+  function fmtGreek(v, showSign) {
+    if (v == null || !Number.isFinite(safeNum(v))) return 'N/A';
+    var n = safeNum(v);
+    return (showSign && n > 0 ? '+' : '') + n.toFixed(3);
+  }
+  function legDeltaDetail() {
+    var k = d.keyLegGreeks || {};
+    var rows = [];
+    function add(key, label, signed) {
+      if (!k[key] || k[key].delta == null) return;
+      var delta = safeNum(k[key].delta);
+      var text = signed
+        ? (delta > 0 ? '+' : '') + delta.toFixed(2)
+        : Math.abs(delta).toFixed(2);
+      rows.push(label + ' ' + text);
+    }
+    var sg = d.strategyGroup || '';
+    if (k.shares) {
+      add('shares', 'Shares', true);
+      add('shortCall', 'Short call');
+    } else if (sg === 'credit_spread' && k.shortPut) {
+      add('shortPut', 'Short put');
+      add('longPut', 'Long put');
+    } else if (sg === 'credit_spread' && k.shortCall) {
+      add('shortCall', 'Short call');
+      add('longCall', 'Long call');
+    } else if (sg === 'put_debit_spread') {
+      add('longPut', 'Long put');
+      add('shortPut', 'Short put');
+    } else if (sg === 'call_debit_spread') {
+      add('longCall', 'Long call');
+      add('shortCall', 'Short call');
+    } else if (sg === 'iron_condor' || sg === 'iron_butterfly') {
+      add('shortPut', 'Short put');
+      add('shortCall', 'Short call');
+    } else {
+      add('shortPut', 'Short put');
+      add('longPut', 'Long put');
+      add('shortCall', 'Short call');
+      add('longCall', 'Long call');
+    }
+    add('body', 'Body');
+    return rows.length ? rows.join(' / ') : '';
+  }
+  var deltaDetail = legDeltaDetail();
   return '<div class="greeks-strip">' + items.map(function(item) {
     var val = item[1];
+    var isDelta = item[0] === 'Delta';
     return '<div class="greek-cell">' +
       '<div class="greek-label">' + item[0] + '</div>' +
-      '<div class="greek-value">' + (val != null ? safeNum(val).toFixed(3) : 'N/A') + '</div>' +
+      '<div class="greek-value">' + fmtGreek(val, true) + '</div>' +
+      (isDelta && deltaDetail ? '<div style="font-size:10px;color:var(--text3);margin-top:4px;line-height:1.35">' + deltaDetail + '</div>' : '') +
     '</div>';
   }).join('') + '</div>';
 }
@@ -182,8 +229,7 @@ function renderUniversalMetrics(d) {
   var maxLossText = fmtRiskMoney(u.maxLoss ?? d.maxLoss ?? d.collateral, u.maxLossUnlimited || d.maxLossUnlimited);
   var probAgainst = sg === 'long_call' || sg === 'long_put';
   var thetaKnown = theta != null;
-  if (thetaKnown) theta = isDebitAnalysis(d) ? -Math.abs(theta) : Math.abs(theta);
-  var thetaGood = thetaKnown && !isDebitAnalysis(d);
+  var thetaGood = thetaKnown && theta >= 0;
 
   function cell(label, value, color, sub) {
     return '<div class="universal-metric">' +
@@ -213,11 +259,14 @@ function fmtAsOf(v) {
 
 function renderModelNotes(d) {
   var notes = d.modelNotes || [];
-  if (!notes.length) return '';
+  var greekNote = {
+    level: 'model',
+    msg: 'Greeks shown are estimated net position Greeks for the full trade when possible. Delta detail lists key leg deltas used for trade selection and risk context.'
+  };
   return '<details class="card" style="padding:10px 12px">' +
     '<summary style="cursor:pointer;font-size:10px;color:var(--text3);font-weight:700;text-transform:uppercase;letter-spacing:.5px">Model assumptions</summary>' +
     '<div style="display:grid;gap:6px;margin-top:9px">' +
-    notes.slice(0, 5).map(function(n) {
+    [greekNote].concat(notes).slice(0, 6).map(function(n) {
       var isWeak = n.level === 'weak';
       return '<div style="display:flex;align-items:flex-start;gap:7px;font-size:10px;line-height:1.45;color:var(--text2)">' +
         '<strong style="font-size:9px;text-transform:uppercase;letter-spacing:.4px">' + (isWeak ? 'Weak estimate' : 'Model') + '</strong>' +

@@ -171,12 +171,9 @@ function buildUniversalMetrics(result) {
   const cushion = result.cushionPct ?? result.minCushionPct ?? result.beCushionPct ?? null;
   const probWorthless = result.probWorthless ?? result.probMaxProfit ?? null;
   let theta = result.dailyThetaDollars ??
-    (result.dailyDecay != null ? result.dailyDecay * 100 : null) ??
+    (result.positionGreeks?.theta != null ? result.positionGreeks.theta * 100 : null) ??
+    (result.dailyDecay != null ? -Math.abs(result.dailyDecay * 100) : null) ??
     (result.greeks?.theta != null ? -result.greeks.theta * 100 : null);
-  const isDebit = result.entryType === 'debit' || sg === 'long_call' || sg === 'long_put' ||
-    sg === 'call_debit_spread' || sg === 'put_debit_spread' ||
-    ((sg === 'bwb' || sg === 'butterfly' || sg === 'ratio_spread') && result.isCredit === false);
-  if (theta != null) theta = isDebit ? -Math.abs(theta) : Math.abs(theta);
 
   return {
     cushionPct: cushion,
@@ -188,14 +185,14 @@ function buildUniversalMetrics(result) {
     probWorthless: probWorthless != null ? pct(probWorthless) : null,
     probWorthlessTone: sg === 'long_call' || sg === 'long_put' ? 'bad' : 'good',
     dailyTheta: theta != null ? Number(theta.toFixed(2)) : null,
-    dailyThetaTone: theta == null ? 'neutral' : isDebit ? 'bad' : 'good',
+    dailyThetaTone: theta == null ? 'neutral' : theta >= 0 ? 'good' : 'bad',
   };
 }
 
 function buildGreeks(result) {
-  const g = result.greeks || {};
+  const g = result.positionGreeks || result.greeks || {};
   return {
-    delta: result.absDelta != null ? result.absDelta : g.delta ?? null,
+    delta: g.delta ?? result.absDelta ?? null,
     gamma: g.gamma ?? null,
     theta: g.theta ?? null,
     vega: g.vega ?? null,

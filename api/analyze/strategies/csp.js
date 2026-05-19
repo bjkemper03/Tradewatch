@@ -5,7 +5,7 @@
 import { findChainContract, extractGreeks } from '../dataFetch.js';
 import { calcExpectedMove, calcPOW, calcWheelScenarios } from '../probability.js';
 import { safeNum, pct } from './sharedMath.js';
-import { bsDelta, completeGreeks, getBestVol } from './sharedGreeks.js';
+import { bsDelta, buildKeyLegGreeks, buildPositionGreeks, completeGreeks, getBestVol, getLegGreek } from './sharedGreeks.js';
 import { payoffSummary, firstBreakeven } from './sharedPayoff.js';
 import { checkEarningsRisk, getSignal, modelNotes } from './sharedContext.js';
 
@@ -23,6 +23,9 @@ export function analyzeCSP(data, legs, expDateObj, dte, credit, prefs) {
   const rawGreeks = extractGreeks(contract);
   const vol      = getBestVol(rawGreeks, hv30);
   const greeks   = completeGreeks(rawGreeks, price, strike, dte / 365, vol, 'put');
+  const shortPutGreeks = getLegGreek(chain, sellLeg, vol, price, dte, 'put');
+  const positionGreeks = buildPositionGreeks(chain, [sellLeg], vol, price, dte, 'put');
+  const keyLegGreeks = buildKeyLegGreeks({ shortPut: shortPutGreeks });
 
   let absDelta = null, deltaSource = 'BS';
   if (greeks?.delta != null) {
@@ -32,6 +35,10 @@ export function analyzeCSP(data, legs, expDateObj, dte, credit, prefs) {
     const bd = bsDelta(price, strike, dte / 365, vol, 'put');
     if (bd !== null) { absDelta = Math.abs(bd); }
   }
+  const scoringGreeks = {
+    delta: absDelta,
+    deltaLabel: 'Short put delta',
+  };
 
   const payoff       = payoffSummary(legs, cr, price, [
     { label: 'Put strike', px: strike, note: 'Short put expires worthless above here', kind: 'short' },
@@ -91,6 +98,9 @@ export function analyzeCSP(data, legs, expDateObj, dte, credit, prefs) {
     collateral, maxProfit, maxLoss,
     absDelta, deltaSource,
     greeks: greeks || null,
+    positionGreeks,
+    keyLegGreeks,
+    scoringGreeks,
     iv: greeks?.iv || null,
     vol: pct(vol),
     em,
