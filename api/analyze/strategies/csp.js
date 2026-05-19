@@ -7,7 +7,15 @@ import { calcExpectedMove, calcPOW, calcWheelScenarios } from '../probability.js
 import { safeNum, pct } from './sharedMath.js';
 import { bsDelta, buildKeyLegGreeks, buildPositionGreeks, completeGreeks, getBestVol, getLegGreek } from './sharedGreeks.js';
 import { payoffSummary, firstBreakeven } from './sharedPayoff.js';
-import { checkEarningsRisk, getSignal, modelNotes } from './sharedContext.js';
+import {
+  checkEarningsRisk,
+  finalizeUniversalSignal,
+  modelNotes,
+  pushAccountRiskIssues,
+  pushCompletenessIssue,
+  pushEarningsIssue,
+  pushUndefinedRiskIssue,
+} from './sharedContext.js';
 
 export function analyzeCSP(data, legs, expDateObj, dte, credit, prefs) {
   const { price, hv30, supports, resistances, earnings, chain } = data;
@@ -77,21 +85,40 @@ export function analyzeCSP(data, legs, expDateObj, dte, credit, prefs) {
   const strikeBelowSupport   = supports.length && strike < supports[0];
 
   const issues = [];
+  const strategy = 'csp';
   const cushMin  = prefs?.cushionMin || 3; // lower threshold for CSPs -- assignment is acceptable
   const deltaMax = prefs?.deltaHigh  || 0.40; // can tolerate higher delta on CSPs
 
-  if (earningsCheck.risk)    issues.push({ level:'critical', msg:`Earnings ${earningsCheck.date} within expiration -- binary risk` });
-  if (cushionPct < 0)        issues.push({ level:'critical', msg:`Strike $${strike} above current price $${price} -- ITM put` });
-  if (strikeBelowSupport)    issues.push({ level:'warning',  msg:`Strike $${strike} below nearest support $${supports[0]} -- buying into weakness if assigned` });
-  if (absDelta && absDelta > deltaMax) issues.push({ level:'warning', msg:`Delta ${absDelta.toFixed(3)} -- high assignment probability` });
+  if (!payoff.maxLossUnlimited && (maxLoss == null || !Number.isFinite(maxLoss) || maxProfit == null || !Number.isFinite(maxProfit))) {
+    pushCompletenessIssue(issues, strategy, 'maxLoss', 'CSP risk/reward could not be calculated reliably');
+  }
+  if (payoff.maxLossUnlimited) {
+    pushUndefinedRiskIssue(issues, strategy, { message: 'Undefined risk detected in a cash-secured put model' });
+  }
+  pushAccountRiskIssues(issues, strategy, maxLoss, prefs);
+  pushEarningsIssue(issues, strategy, earningsCheck, {
+    riskLevel: 'red',
+    riskBlocking: true,
+    riskMessage: `Earnings ${earningsCheck.date} falls before expiration -- binary risk`,
+  });
+  if (cushionPct < 0) {
+    issues.push({ id:'csp_itm_put', level:'red', category:'risk', scope:'strategy', strategy, metric:'cushionPct', value:cushionPct, blocking:true, message:`Strike $${strike} above current price $${price} -- ITM put` });
+  }
+  if (strikeBelowSupport) {
+    issues.push({ id:'csp_strike_below_support', level:'info', category:'context', scope:'context', strategy, affectsSignal:false, message:`Context: strike $${strike} is below nearest support $${supports[0]} -- assignment may buy into weakness` });
+  }
+  if (absDelta && absDelta > deltaMax) {
+    issues.push({ id:'csp_delta_high', level:'yellow', category:'probability', scope:'strategy', strategy, metric:'absDelta', value:absDelta, warnAt:deltaMax, message:`Delta ${absDelta.toFixed(3)} -- high assignment probability` });
+  }
+  const decision = finalizeUniversalSignal(issues, { cautionOnAnyMeaningfulIssue: true });
 
   // CSP-specific: flag if yield is very low but don't penalize -- show context instead
   const yieldData = wheelData?.ifNotAssigned?.yieldData;
 
   return {
     strategyGroup: 'csp',
-    signal: getSignal(issues),
-    issues,
+    signal: decision.signal,
+    issues: decision.issues,
 
     price, strike, breakeven,
     cushionPct, beCushionPct,
@@ -124,6 +151,7 @@ export function analyzeCSP(data, legs, expDateObj, dte, credit, prefs) {
 
     earningsRisk: earningsCheck.risk,
     earningsDate: earningsCheck.date,
+    earningsUnknown: earningsCheck.unknown,
 
     // Framing note -- assignment is not a loss in wheel strategy
     wheelNote: 'Assignment means you buy shares at your effective cost basis of $' + breakeven.toFixed(2) + '. This is the goal in wheel strategy.',

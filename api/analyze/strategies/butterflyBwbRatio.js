@@ -8,7 +8,15 @@ import { safeNum, pct, simpleRatio } from './sharedMath.js';
 import { bsDelta, buildKeyLegGreeks, buildPositionGreeks, getBestVol, getLegGreek } from './sharedGreeks.js';
 import { payoffSummary, collateralFromPayoff } from './sharedPayoff.js';
 import { groupedByStrike, sameOptionType } from './sharedStructure.js';
-import { checkEarningsRisk, getSignal, modelNotes } from './sharedContext.js';
+import {
+  checkEarningsRisk,
+  finalizeUniversalSignal,
+  modelNotes,
+  pushAccountRiskIssues,
+  pushCompletenessIssue,
+  pushEarningsIssue,
+  pushUndefinedRiskIssue,
+} from './sharedContext.js';
 
 export function analyzeButterflyBWB(data, legs, expDateObj, dte, credit, prefs, isCredit) {
   const { price, hv30, supports, resistances, earnings, chain } = data;
@@ -114,17 +122,39 @@ export function analyzeButterflyBWB(data, legs, expDateObj, dte, credit, prefs, 
   const nowPayoff = payoff.checkpoints.find(p => p.label === 'Now')?.pnl;
 
   const issues = [];
-  if (earningsCheck.risk)                issues.push({ level:'critical', weight:5, msg:`Earnings ${earningsCheck.date} within expiration` });
-  if (payoff.maxLossUnlimited)          issues.push({ level:'critical', weight:6, msg:'Structure has uncapped expiration loss on one side' });
-  if (nowPayoff != null && nowPayoff < 0) issues.push({ level:'warning', msg:'Price is currently outside the expiration profit zone' });
-  if (crRatio && crRatio < 12)          issues.push({ level:'warning',  msg:`Low credit/risk ratio: ${crRatio}%` });
+  const strategy = isBWB ? 'bwb' : isRatio ? 'ratio_spread' : 'butterfly';
+  if (!payoff.maxLossUnlimited && (maxLoss == null || !Number.isFinite(maxLoss) || maxProfit == null || !Number.isFinite(maxProfit))) {
+    pushCompletenessIssue(issues, strategy, 'maxLoss', 'Butterfly/BWB/ratio risk/reward could not be calculated reliably');
+  }
+  if (payoff.maxLossUnlimited) {
+    pushUndefinedRiskIssue(issues, strategy, {
+      intentional: isRatio,
+      blocking: !isRatio,
+      message: isRatio
+        ? 'Ratio spread has intentional undefined risk on one side; confirm this is part of the plan before entry'
+        : 'Structure has uncapped expiration loss on one side',
+    });
+  }
+  pushAccountRiskIssues(issues, strategy, maxLoss, prefs);
+  pushEarningsIssue(issues, strategy, earningsCheck, {
+    riskLevel: 'red',
+    riskBlocking: true,
+    riskMessage: `Earnings ${earningsCheck.date} falls before expiration`,
+  });
+  if (nowPayoff != null && nowPayoff < 0) {
+    issues.push({ id:'butterfly_outside_profit_zone', level:'yellow', category:'risk', scope:'strategy', strategy, message:'Price is currently outside the expiration profit zone' });
+  }
+  if (crRatio && crRatio < 12) {
+    issues.push({ id:'butterfly_low_credit_risk_ratio', level:'yellow', category:'compensation', scope:'strategy', strategy, metric:'crRatio', value:crRatio, warnAt:12, message:`Low credit/risk ratio: ${crRatio}%` });
+  }
+  const decision = finalizeUniversalSignal(issues, { cautionOnAnyMeaningfulIssue: true });
 
   return {
-    strategyGroup: isBWB ? 'bwb' : isRatio ? 'ratio_spread' : 'butterfly',
+    strategyGroup: strategy,
     entryType: isCredit ? 'credit' : 'debit',
     isCredit, isBWB, isSymmetric, isRatio,
-    signal: getSignal(issues),
-    issues,
+    signal: decision.signal,
+    issues: decision.issues,
 
     price, centerStrike, lowerStrike, upperStrike,
     lowerWing, upperWing, wingRatio, wingRatioLabel,
@@ -157,6 +187,7 @@ export function analyzeButterflyBWB(data, legs, expDateObj, dte, credit, prefs, 
     supports, resistances,
     earningsRisk: earningsCheck.risk,
     earningsDate: earningsCheck.date,
+    earningsUnknown: earningsCheck.unknown,
     modelNotes: modelNotes(data, {
       greeks: netGreeks || greeks,
       structureNote: 'Butterfly/BWB/ratio payoff now uses exact entered legs at expiration. Probability tiers are still estimated from a simplified profit zone.',

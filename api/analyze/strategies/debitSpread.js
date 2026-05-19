@@ -7,7 +7,15 @@ import { calcExpectedMove, calcPOW } from '../probability.js';
 import { safeNum, pct } from './sharedMath.js';
 import { bsDelta, buildKeyLegGreeks, buildPositionGreeks, getBestVol, getLegGreek } from './sharedGreeks.js';
 import { payoffSummary, firstBreakeven, collateralFromPayoff } from './sharedPayoff.js';
-import { checkEarningsRisk, getSignal, modelNotes } from './sharedContext.js';
+import {
+  checkEarningsRisk,
+  finalizeUniversalSignal,
+  modelNotes,
+  pushAccountRiskIssues,
+  pushCompletenessIssue,
+  pushEarningsIssue,
+  pushUndefinedRiskIssue,
+} from './sharedContext.js';
 
 export function analyzeDebitSpread(data, legs, expDateObj, dte, debit, prefs) {
   const { price, hv30, supports, resistances, earnings, chain } = data;
@@ -86,16 +94,33 @@ export function analyzeDebitSpread(data, legs, expDateObj, dte, debit, prefs) {
   const earningsCheck = checkEarningsRisk(earnings, expDateObj);
 
   const issues = [];
-  if (payoff.maxLossUnlimited) issues.push({ level:'critical', weight:6, msg:'Undefined/naked risk detected -- not beginner-safe' });
-  if (earningsCheck.risk)      issues.push({ level:'critical', weight:5, msg:`Earnings ${earningsCheck.date} within expiration -- binary move` });
-  if (movePct > 10)            issues.push({ level:'warning',  msg:`Needs ${movePct}% move to breakeven -- aggressive target` });
-  if (riskReward && riskReward > 2) issues.push({ level:'warning', weight:3, msg:`Risk/reward ${riskReward}:1 -- risking more than potential gain` });
-  if (probMaxLoss && probMaxLoss > 0.60) issues.push({ level:'warning', msg:`${pct(probMaxLoss)}% chance of max loss -- low probability trade` });
+  const strategy = isPut ? 'put_debit_spread' : 'call_debit_spread';
+  if (!payoff.maxLossUnlimited && (maxLoss == null || !Number.isFinite(maxLoss) || maxProfit == null || !Number.isFinite(maxProfit))) {
+    pushCompletenessIssue(issues, strategy, 'maxLoss', 'Debit spread risk/reward could not be calculated reliably');
+  }
+  if (payoff.maxLossUnlimited) {
+    pushUndefinedRiskIssue(issues, strategy, { message: 'Undefined risk detected in a defined-risk debit spread' });
+  }
+  pushAccountRiskIssues(issues, strategy, maxLoss, prefs);
+  pushEarningsIssue(issues, strategy, earningsCheck, {
+    riskLevel: 'yellow',
+    riskMessage: `Earnings ${earningsCheck.date} falls before expiration -- binary move`,
+  });
+  if (movePct > 10) {
+    issues.push({ id:'debit_spread_large_breakeven_move', level:'yellow', category:'probability', scope:'strategy', strategy, metric:'movePct', value:movePct, warnAt:10, message:`Needs ${movePct}% move to breakeven -- aggressive target` });
+  }
+  if (riskReward && riskReward > 2) {
+    issues.push({ id:'debit_spread_risk_reward_high', level:'yellow', category:'compensation', scope:'strategy', strategy, metric:'riskReward', value:riskReward, warnAt:2, message:`Risk/reward ${riskReward}:1 -- risking more than potential gain` });
+  }
+  if (probMaxLoss && probMaxLoss > 0.60) {
+    issues.push({ id:'debit_spread_prob_max_loss_high', level:'yellow', category:'probability', scope:'strategy', strategy, metric:'probMaxLoss', value:probMaxLoss, warnAt:0.60, message:`${pct(probMaxLoss)}% chance of max loss -- low probability trade` });
+  }
+  const decision = finalizeUniversalSignal(issues, { cautionOnAnyMeaningfulIssue: true });
 
   return {
-    strategyGroup: isPut ? 'put_debit_spread' : 'call_debit_spread',
-    signal: getSignal(issues),
-    issues,
+    strategyGroup: strategy,
+    signal: decision.signal,
+    issues: decision.issues,
 
     price, longStrike, shortStrike, spreadWidth,
     breakeven, moveToBreakeven, movePct,
@@ -117,6 +142,7 @@ export function analyzeDebitSpread(data, legs, expDateObj, dte, debit, prefs) {
     supports, resistances,
     earningsRisk: earningsCheck.risk,
     earningsDate: earningsCheck.date,
+    earningsUnknown: earningsCheck.unknown,
     modelNotes: modelNotes(data, { greeks }),
     payoff,
   };

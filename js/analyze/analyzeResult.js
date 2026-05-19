@@ -172,7 +172,7 @@ function cushionSubtext(d) {
 function renderTopPanels(d) {
   var s = d.summary || {};
   var dte = s.dte || { label: d.dte != null ? d.dte + ' DTE' : 'Unknown', tone: 'neutral', detail: 'No expiration date' };
-  var earn = s.earnings || { label: d.earningsRisk ? 'Earnings risk' : 'No earnings risk', tone: d.earningsRisk ? 'bad' : 'good', detail: d.earningsDate || 'Unknown' };
+  var earn = s.earnings || { label: d.earningsRisk ? 'Earnings risk' : (d.earningsDate ? 'No earnings risk' : 'Earnings unknown'), tone: d.earningsRisk ? 'bad' : (d.earningsDate ? 'good' : 'neutral'), detail: d.earningsDate || 'Date unavailable' };
   var liq = s.liquidity || { label: 'Unknown', tone: 'neutral', detail: 'Liquidity unavailable' };
   var liqTone = liq.grade === 'Good' ? 'good' : liq.grade === 'Okay' ? 'warn' : liq.grade === 'Thin' || liq.grade === 'Poor' ? 'bad' : 'neutral';
 
@@ -198,7 +198,7 @@ function renderTopPanels(d) {
 function renderHeaderChips(d) {
   var s = d.summary || {};
   var dte = s.dte || { label: d.dte != null ? d.dte + ' DTE' : 'Unknown', tone: 'neutral', detail: '' };
-  var earn = s.earnings || { label: d.earningsRisk ? 'Earnings risk' : 'No earnings risk', tone: d.earningsRisk ? 'bad' : 'good', detail: d.earningsDate || 'Unknown' };
+  var earn = s.earnings || { label: d.earningsRisk ? 'Earnings risk' : (d.earningsDate ? 'No earnings risk' : 'Earnings unknown'), tone: d.earningsRisk ? 'bad' : (d.earningsDate ? 'good' : 'neutral'), detail: d.earningsDate || 'Date unavailable' };
   var liq = s.liquidity || { label: 'Unknown', grade: 'Unknown', detail: 'Check bid/ask before entry' };
   var liqTone = liq.grade === 'Good' ? 'good' : liq.grade === 'Okay' ? 'warn' : liq.grade === 'Thin' || liq.grade === 'Poor' ? 'bad' : 'neutral';
 

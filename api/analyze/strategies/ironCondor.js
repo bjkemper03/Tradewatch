@@ -7,7 +7,15 @@ import { calcExpectedMove, calcCondorProbs } from '../probability.js';
 import { safeNum, pct } from './sharedMath.js';
 import { bsDelta, buildKeyLegGreeks, buildPositionGreeks, getBestVol, getLegGreek } from './sharedGreeks.js';
 import { payoffSummary } from './sharedPayoff.js';
-import { checkEarningsRisk, getSignal, modelNotes } from './sharedContext.js';
+import {
+  checkEarningsRisk,
+  finalizeUniversalSignal,
+  modelNotes,
+  pushAccountRiskIssues,
+  pushCompletenessIssue,
+  pushEarningsIssue,
+  pushUndefinedRiskIssue,
+} from './sharedContext.js';
 
 export function analyzeIronCondor(data, legs, expDateObj, dte, credit, prefs) {
   const { price, hv30, supports, resistances, earnings, chain } = data;
@@ -91,21 +99,42 @@ export function analyzeIronCondor(data, legs, expDateObj, dte, credit, prefs) {
 
   // Issues
   const issues = [];
+  const strategy = isIronButterfly ? 'iron_butterfly' : 'iron_condor';
   const cushMin  = prefs?.cushionMin || 5;
   const deltaMax = prefs?.deltaHigh  || 0.30;
 
-  if (payoff.maxLossUnlimited)             issues.push({ level:'critical', weight:6, msg:'Undefined/naked risk detected -- not beginner-safe' });
-  if (earningsCheck.risk)                  issues.push({ level:'critical', weight:5, msg:`Earnings ${earningsCheck.date} within expiration` });
-  if (minCushionPct < cushMin)             issues.push({ level:'critical', weight:5, msg:`Tight cushion: put side ${putCushionPct}%, call side ${callCushionPct}%` });
-  if (putDelta > deltaMax)                 issues.push({ level:'warning', weight:3, msg:`Put delta ${putDelta.toFixed(3)} above ${deltaMax} target` });
-  if (callDelta > deltaMax)                issues.push({ level:'warning', weight:3, msg:`Call delta ${callDelta.toFixed(3)} above ${deltaMax} target` });
-  if (isIronButterfly)                     issues.push({ level:'warning',  msg:'Iron butterfly -- max profit only if price pins at strike. Very tight target.' });
-  if (price < shortPut || price > shortCall) issues.push({ level:'critical', weight:6, msg:'Price already outside the tent -- do not open' });
+  if (!payoff.maxLossUnlimited && (maxLoss == null || !Number.isFinite(maxLoss) || maxProfit == null || !Number.isFinite(maxProfit))) {
+    pushCompletenessIssue(issues, strategy, 'maxLoss', 'Iron condor risk/reward could not be calculated reliably');
+  }
+  if (payoff.maxLossUnlimited) {
+    pushUndefinedRiskIssue(issues, strategy, { message: 'Undefined risk detected in an iron condor model' });
+  }
+  pushAccountRiskIssues(issues, strategy, maxLoss, prefs);
+  pushEarningsIssue(issues, strategy, earningsCheck, {
+    riskLevel: 'red',
+    riskBlocking: true,
+    riskMessage: `Earnings ${earningsCheck.date} falls before expiration`,
+  });
+  if (minCushionPct < 0) {
+    issues.push({ id:'iron_condor_price_outside_tent', level:'red', category:'risk', scope:'strategy', strategy, metric:'minCushionPct', value:minCushionPct, blocking:true, message:'Price already outside the tent -- do not open' });
+  } else if (minCushionPct < cushMin) {
+    issues.push({ id:'iron_condor_tight_cushion', level:'yellow', category:'risk', scope:'strategy', strategy, metric:'minCushionPct', value:minCushionPct, warnAt:cushMin, message:`Tight cushion: put side ${putCushionPct}%, call side ${callCushionPct}%` });
+  }
+  if (putDelta > deltaMax) {
+    issues.push({ id:'iron_condor_put_delta_high', level:'yellow', category:'probability', scope:'strategy', strategy, metric:'putDelta', value:putDelta, warnAt:deltaMax, message:`Put delta ${putDelta.toFixed(3)} above ${deltaMax} target` });
+  }
+  if (callDelta > deltaMax) {
+    issues.push({ id:'iron_condor_call_delta_high', level:'yellow', category:'probability', scope:'strategy', strategy, metric:'callDelta', value:callDelta, warnAt:deltaMax, message:`Call delta ${callDelta.toFixed(3)} above ${deltaMax} target` });
+  }
+  if (isIronButterfly) {
+    issues.push({ id:'iron_butterfly_pin_risk', level:'yellow', category:'structure', scope:'strategy', strategy, message:'Iron butterfly -- max profit only if price pins at strike. Very tight target.' });
+  }
+  const decision = finalizeUniversalSignal(issues, { cautionOnAnyMeaningfulIssue: true });
 
   return {
-    strategyGroup: isIronButterfly ? 'iron_butterfly' : 'iron_condor',
-    signal: getSignal(issues),
-    issues,
+    strategyGroup: strategy,
+    signal: decision.signal,
+    issues: decision.issues,
 
     price, shortPut, longPut, shortCall, longCall,
     putWidth, callWidth, maxWidth,
@@ -131,6 +160,7 @@ export function analyzeIronCondor(data, legs, expDateObj, dte, credit, prefs) {
     supports, resistances,
     earningsRisk: earningsCheck.risk,
     earningsDate: earningsCheck.date,
+    earningsUnknown: earningsCheck.unknown,
     isIronButterfly,
     modelNotes: modelNotes(data, {
       greeks: putGreeks || callGreeks,

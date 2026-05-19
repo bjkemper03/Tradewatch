@@ -100,6 +100,9 @@ export function decideSignal(issues = [], options = {}) {
   if (options.noGoOnThreeTradeQualityWarnings && meaningfulYellows.length >= 3) {
     return { signal: 'NO-GO', issues: normalized };
   }
+  if (options.cautionOnAnyMeaningfulIssue && meaningfulYellows.length >= 1) {
+    return { signal: 'CAUTION', issues: normalized };
+  }
   if (severeNonBlocking.length || meaningfulYellows.length >= 2) {
     return { signal: 'CAUTION', issues: normalized };
   }
