@@ -5,7 +5,7 @@
 import { findChainContract, extractGreeks } from '../dataFetch.js';
 import { calcExpectedMove, calcPOW, calcWheelScenarios } from '../probability.js';
 import { safeNum, pct } from './sharedMath.js';
-import { bsDelta, getBestVol } from './sharedGreeks.js';
+import { bsDelta, buildKeyLegGreeks, buildPositionGreeks, getBestVol, getLegGreek } from './sharedGreeks.js';
 import { payoffSummary, firstBreakeven } from './sharedPayoff.js';
 import { checkEarningsRisk, getSignal, modelNotes } from './sharedContext.js';
 
@@ -22,6 +22,15 @@ export function analyzeCoveredCall(data, legs, expDateObj, dte, credit, prefs) {
   const contract = findChainContract(chain, strike, 'call');
   const greeks   = extractGreeks(contract);
   const vol      = getBestVol(greeks, hv30);
+  const callQty = Math.max(1, safeNum(sellLeg.n || sellLeg.qty || 1, 1));
+  const shortCallGreeks = getLegGreek(chain, sellLeg, vol, price, dte, 'call');
+  const positionGreeks = buildPositionGreeks(chain, [sellLeg], vol, price, dte, 'call', {
+    sharesDelta: callQty,
+  });
+  const keyLegGreeks = buildKeyLegGreeks({
+    shares: { delta: callQty, source: 'Shares' },
+    shortCall: shortCallGreeks,
+  });
 
   let absDelta = null, deltaSource = 'BS';
   if (greeks?.delta != null) {
@@ -31,6 +40,10 @@ export function analyzeCoveredCall(data, legs, expDateObj, dte, credit, prefs) {
     const bd = bsDelta(price, strike, dte / 365, vol, 'call');
     if (bd !== null) { absDelta = Math.abs(bd); }
   }
+  const scoringGreeks = {
+    delta: absDelta,
+    deltaLabel: 'Short call delta',
+  };
 
   const payoff        = payoffSummary(legs, cr, price, [
     { label: 'Call strike', px: strike, note: 'Called away above here', kind: 'short' },
@@ -73,6 +86,9 @@ export function analyzeCoveredCall(data, legs, expDateObj, dte, credit, prefs) {
     collateral: 0,
     absDelta, deltaSource,
     greeks: greeks || null,
+    positionGreeks,
+    keyLegGreeks,
+    scoringGreeks,
     iv: greeks?.iv || null,
     vol: pct(vol),
     em,

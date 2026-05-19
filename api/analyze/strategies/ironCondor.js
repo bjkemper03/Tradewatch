@@ -5,7 +5,7 @@
 import { findChainContract, extractGreeks } from '../dataFetch.js';
 import { calcExpectedMove, calcCondorProbs } from '../probability.js';
 import { safeNum, pct } from './sharedMath.js';
-import { bsDelta, getBestVol } from './sharedGreeks.js';
+import { bsDelta, buildKeyLegGreeks, buildPositionGreeks, getBestVol, getLegGreek } from './sharedGreeks.js';
 import { payoffSummary } from './sharedPayoff.js';
 import { checkEarningsRisk, getSignal, modelNotes } from './sharedContext.js';
 
@@ -48,10 +48,20 @@ export function analyzeIronCondor(data, legs, expDateObj, dte, credit, prefs) {
   const putGreeks    = extractGreeks(putContract);
   const callGreeks   = extractGreeks(callContract);
   const vol          = getBestVol(putGreeks || callGreeks, hv30);
+  const positionGreeks = buildPositionGreeks(chain, legs, vol, price, dte);
+  const keyLegGreeks = buildKeyLegGreeks({
+    shortPut: getLegGreek(chain, sellPut, vol, price, dte, 'put'),
+    shortCall: getLegGreek(chain, sellCall, vol, price, dte, 'call'),
+  });
 
   // Deltas
   const putDelta  = putGreeks?.delta  != null ? Math.abs(putGreeks.delta)  : Math.abs(bsDelta(price, shortPut,  dte/365, vol, 'put')  || 0);
   const callDelta = callGreeks?.delta != null ? Math.abs(callGreeks.delta) : Math.abs(bsDelta(price, shortCall, dte/365, vol, 'call') || 0);
+  const scoringGreeks = {
+    putDelta,
+    callDelta,
+    deltaLabel: 'Short put / short call delta',
+  };
 
   // Core metrics
   const payoff = payoffSummary(legs, cr, price, [
@@ -103,6 +113,9 @@ export function analyzeIronCondor(data, legs, expDateObj, dte, credit, prefs) {
     putCushionPct, callCushionPct, minCushionPct,
     maxProfit, maxLoss,
     putDelta, callDelta,
+    positionGreeks,
+    keyLegGreeks,
+    scoringGreeks,
     iv: putGreeks?.iv || callGreeks?.iv || null,
     vol: pct(vol),
     em,

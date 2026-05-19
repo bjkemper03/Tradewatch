@@ -5,7 +5,7 @@
 import { findChainContract, extractGreeks } from '../dataFetch.js';
 import { calcExpectedMove, calcPOW, calcButterflyProbs } from '../probability.js';
 import { safeNum, pct, simpleRatio } from './sharedMath.js';
-import { bsDelta, aggregateLegGreeks, getBestVol } from './sharedGreeks.js';
+import { bsDelta, buildKeyLegGreeks, buildPositionGreeks, getBestVol, getLegGreek } from './sharedGreeks.js';
 import { payoffSummary, collateralFromPayoff } from './sharedPayoff.js';
 import { groupedByStrike, sameOptionType } from './sharedStructure.js';
 import { checkEarningsRisk, getSignal, modelNotes } from './sharedContext.js';
@@ -50,10 +50,17 @@ export function analyzeButterflyBWB(data, legs, expDateObj, dte, credit, prefs, 
   const contract = findChainContract(chain, centerStrike, optType);
   const greeks   = extractGreeks(contract);
   const vol      = getBestVol(greeks, hv30);
-  const netGreeks = aggregateLegGreeks(chain, allLegs, vol, price, dte, optType);
+  const netGreeks = buildPositionGreeks(chain, allLegs, vol, price, dte, optType);
+  const keyLegGreeks = buildKeyLegGreeks({
+    body: getLegGreek(chain, centerGroup, vol, price, dte, optType),
+  });
   const absDelta = netGreeks?.delta != null
     ? Math.abs(netGreeks.delta)
     : Math.abs(bsDelta(price, centerStrike, dte / 365, vol, optType) || 0);
+  const scoringGreeks = {
+    delta: absDelta,
+    deltaLabel: 'Position delta',
+  };
 
   // Expiration payoff from exact leg geometry.
   const payoff = payoffSummary(legs, isCredit ? cr : -cr, price, [
@@ -142,6 +149,9 @@ export function analyzeButterflyBWB(data, legs, expDateObj, dte, credit, prefs, 
     absDelta,
     deltaSource: netGreeks?.source || 'BS',
     greeks: netGreeks || greeks || null,
+    positionGreeks: netGreeks || null,
+    keyLegGreeks,
+    scoringGreeks,
     iv: greeks?.iv || null,
 
     supports, resistances,

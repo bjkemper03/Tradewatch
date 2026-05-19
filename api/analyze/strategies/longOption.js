@@ -5,7 +5,7 @@
 import { findChainContract, extractGreeks } from '../dataFetch.js';
 import { calcExpectedMove, calcLongOptionTargets } from '../probability.js';
 import { safeNum, pct } from './sharedMath.js';
-import { bsDelta, getBestVol } from './sharedGreeks.js';
+import { bsDelta, buildKeyLegGreeks, buildPositionGreeks, getBestVol, getLegGreek } from './sharedGreeks.js';
 import { payoffSummary, firstBreakeven, collateralFromPayoff } from './sharedPayoff.js';
 import { checkEarningsRisk, getSignal, modelNotes } from './sharedContext.js';
 
@@ -25,10 +25,19 @@ export function analyzeLongOption(data, legs, expDateObj, dte, premium, prefs) {
   const contract = findChainContract(chain, strike, optType);
   const greeks   = extractGreeks(contract);
   const vol      = getBestVol(greeks, hv30);
+  const longLegGreeks = getLegGreek(chain, buyLeg, vol, price, dte, optType);
+  const positionGreeks = buildPositionGreeks(chain, [buyLeg], vol, price, dte, optType);
+  const keyLegGreeks = buildKeyLegGreeks(isCall
+    ? { longCall: longLegGreeks }
+    : { longPut: longLegGreeks });
 
   const absDelta = greeks?.delta != null
     ? Math.abs(greeks.delta)
     : Math.abs(bsDelta(price, strike, dte / 365, vol, optType) || 0);
+  const scoringGreeks = {
+    delta: absDelta,
+    deltaLabel: isCall ? 'Long call delta' : 'Long put delta',
+  };
 
   // Detailed probability analysis with realistic targets
   const targetData = calcLongOptionTargets(price, strike, prem, vol, dte, optType);
@@ -79,6 +88,9 @@ export function analyzeLongOption(data, legs, expDateObj, dte, premium, prefs) {
 
     absDelta,
     greeks: greeks || null,
+    positionGreeks,
+    keyLegGreeks,
+    scoringGreeks,
     iv: greeks?.iv || null,
     vol: pct(vol),
     em,

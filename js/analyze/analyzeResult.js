@@ -3,19 +3,66 @@
 // =============================================================================
 
 function renderGreekBox(d) {
-  var g = (d.summary && d.summary.greeks) || d.greeks || {};
+  var g = d.positionGreeks || (d.summary && d.summary.greeks) || d.greeks || {};
   var items = [
-    ['Delta', d.absDelta != null ? d.absDelta : g.delta],
+    ['Delta', g.delta != null ? g.delta : d.absDelta],
     ['Gamma', g.gamma],
     ['Theta', g.theta],
     ['Vega',  g.vega],
     ['Rho',   g.rho]
   ];
+  function fmtGreek(v, showSign) {
+    if (v == null || !Number.isFinite(safeNum(v))) return 'N/A';
+    var n = safeNum(v);
+    return (showSign && n > 0 ? '+' : '') + n.toFixed(3);
+  }
+  function legDeltaDetail() {
+    var k = d.keyLegGreeks || {};
+    var rows = [];
+    function add(key, label, signed) {
+      if (!k[key] || k[key].delta == null) return;
+      var delta = safeNum(k[key].delta);
+      var text = signed
+        ? (delta > 0 ? '+' : '') + delta.toFixed(2)
+        : Math.abs(delta).toFixed(2);
+      rows.push(label + ' ' + text);
+    }
+    var sg = d.strategyGroup || '';
+    if (k.shares) {
+      add('shares', 'Shares', true);
+      add('shortCall', 'Short call');
+    } else if (sg === 'credit_spread' && k.shortPut) {
+      add('shortPut', 'Short put');
+      add('longPut', 'Long put');
+    } else if (sg === 'credit_spread' && k.shortCall) {
+      add('shortCall', 'Short call');
+      add('longCall', 'Long call');
+    } else if (sg === 'put_debit_spread') {
+      add('longPut', 'Long put');
+      add('shortPut', 'Short put');
+    } else if (sg === 'call_debit_spread') {
+      add('longCall', 'Long call');
+      add('shortCall', 'Short call');
+    } else if (sg === 'iron_condor' || sg === 'iron_butterfly') {
+      add('shortPut', 'Short put');
+      add('shortCall', 'Short call');
+    } else {
+      add('shortPut', 'Short put');
+      add('longPut', 'Long put');
+      add('shortCall', 'Short call');
+      add('longCall', 'Long call');
+    }
+    add('body', 'Body');
+    return rows.length ? rows.join(' / ') : '';
+  }
+  var deltaDetail = legDeltaDetail();
   return '<div class="greeks-strip">' + items.map(function(item) {
     var val = item[1];
+    var isDelta = item[0] === 'Delta';
     return '<div class="greek-cell">' +
       '<div class="greek-label">' + item[0] + '</div>' +
-      '<div class="greek-value">' + (val != null ? safeNum(val).toFixed(3) : 'N/A') + '</div>' +
+      '<div class="greek-value">' + fmtGreek(val, true) + '</div>' +
+      (isDelta && deltaDetail ? '<div style="font-size:10px;color:var(--text3);margin-top:4px;line-height:1.35">' + deltaDetail + '</div>' : '') +
     '</div>';
   }).join('') + '</div>';
 }
@@ -182,8 +229,7 @@ function renderUniversalMetrics(d) {
   var maxLossText = fmtRiskMoney(u.maxLoss ?? d.maxLoss ?? d.collateral, u.maxLossUnlimited || d.maxLossUnlimited);
   var probAgainst = sg === 'long_call' || sg === 'long_put';
   var thetaKnown = theta != null;
-  if (thetaKnown) theta = isDebitAnalysis(d) ? -Math.abs(theta) : Math.abs(theta);
-  var thetaGood = thetaKnown && !isDebitAnalysis(d);
+  var thetaGood = thetaKnown && theta >= 0;
 
   function cell(label, value, color, sub) {
     return '<div class="universal-metric">' +

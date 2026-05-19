@@ -5,7 +5,7 @@
 import { findChainContract, extractGreeks } from '../dataFetch.js';
 import { calcExpectedMove, calcPOW } from '../probability.js';
 import { safeNum, pct } from './sharedMath.js';
-import { bsDelta, getBestVol } from './sharedGreeks.js';
+import { bsDelta, buildKeyLegGreeks, buildPositionGreeks, getBestVol, getLegGreek } from './sharedGreeks.js';
 import { payoffSummary, firstBreakeven, collateralFromPayoff } from './sharedPayoff.js';
 import { checkEarningsRisk, getSignal, modelNotes } from './sharedContext.js';
 
@@ -51,10 +51,20 @@ export function analyzeDebitSpread(data, legs, expDateObj, dte, debit, prefs) {
   const contract = findChainContract(chain, longStrike, optType);
   const greeks   = extractGreeks(contract);
   const vol      = getBestVol(greeks, hv30);
+  const longLegGreeks = getLegGreek(chain, buyLeg, vol, price, dte, optType);
+  const shortLegGreeks = getLegGreek(chain, sellLeg, vol, price, dte, optType);
+  const positionGreeks = buildPositionGreeks(chain, legs, vol, price, dte, optType);
+  const keyLegGreeks = buildKeyLegGreeks(isPut
+    ? { longPut: longLegGreeks, shortPut: shortLegGreeks }
+    : { longCall: longLegGreeks, shortCall: shortLegGreeks });
 
   const absDelta = greeks?.delta != null
     ? Math.abs(greeks.delta)
     : Math.abs(bsDelta(price, longStrike, dte / 365, vol, optType) || 0);
+  const scoringGreeks = {
+    delta: absDelta,
+    deltaLabel: isPut ? 'Long put delta' : 'Long call delta',
+  };
 
   const em = calcExpectedMove(price, vol, dte);
 
@@ -95,6 +105,9 @@ export function analyzeDebitSpread(data, legs, expDateObj, dte, debit, prefs) {
 
     absDelta,
     greeks: greeks || null,
+    positionGreeks,
+    keyLegGreeks,
+    scoringGreeks,
     iv: greeks?.iv || null,
     vol: pct(vol),
     em,
