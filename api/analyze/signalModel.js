@@ -32,14 +32,14 @@ function normalizeLevel(level) {
   return level;
 }
 
-function defaultScoreImpact(level) {
-  if (level === 'yellow') return -10;
-  if (level === 'red') return -25;
+function defaultScoreImpact(issue, level) {
+  console.warn('[analyze] Missing scoreImpact for issue ' + (issue?.id || '(unknown)') + ' at level ' + level + '; defaulting to 0');
   return 0;
 }
 
 export function createIssue(issue) {
   const level = normalizeLevel(issue.level);
+  const hasScoreImpact = Object.prototype.hasOwnProperty.call(issue, 'scoreImpact');
   return {
     id: issue.id || `${issue.category || 'model'}_${level}`,
     level,
@@ -51,7 +51,7 @@ export function createIssue(issue) {
     warnAt: issue.warnAt ?? null,
     redAt: issue.redAt ?? null,
     blocking: !!issue.blocking,
-    scoreImpact: issue.scoreImpact ?? defaultScoreImpact(level),
+    scoreImpact: hasScoreImpact ? issue.scoreImpact : defaultScoreImpact(issue, level),
     message: issue.message || issue.msg || '',
     detail: issue.detail || null,
     source: issue.source || 'calculated',

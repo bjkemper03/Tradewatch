@@ -14,18 +14,6 @@ export function checkEarningsRisk(earnings, expDateObj) {
   return { risk: ed >= today && ed <= expDateObj, date: earnings.date, unknown: false };
 }
 
-export function getSignal(issues) {
-  const score = issues.reduce((sum, issue) => {
-    if (issue.level === 'critical') return sum + (issue.weight || 5);
-    if (issue.level === 'warning') return sum + (issue.weight || 2);
-    return sum + (issue.weight || 1);
-  }, 0);
-  if (issues.some(i => i.level === 'critical' && (i.weight || 5) >= 5)) return 'NO-GO';
-  if (score >= 5) return 'NO-GO';
-  if (score >= 2) return 'CAUTION';
-  return 'GO';
-}
-
 export function finalizeUniversalSignal(issues, options = {}) {
   const decision = decideSignal(issues, options);
   return {

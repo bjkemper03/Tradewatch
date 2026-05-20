@@ -91,6 +91,8 @@ export function analyzeCSP(data, legs, expDateObj, dte, credit, prefs) {
   const strategy = 'csp';
   const cushMin  = prefs?.cushionMin || 3; // lower threshold for CSPs -- assignment is acceptable
   const deltaMax = prefs?.deltaHigh  || 0.40; // can tolerate higher delta on CSPs
+  const deltaRed = parseFloat((deltaMax * 1.15).toFixed(3));
+  const wantsAssignment = prefs?.cspWantsAssignment ?? prefs?.wantsAssignment ?? false;
 
   if (!payoff.maxLossUnlimited && (maxLoss == null || !Number.isFinite(maxLoss) || maxProfit == null || !Number.isFinite(maxProfit))) {
     pushCompletenessIssue(issues, strategy, 'maxLoss', 'CSP risk/reward could not be calculated reliably');
@@ -119,8 +121,15 @@ export function analyzeCSP(data, legs, expDateObj, dte, credit, prefs) {
   if (strikeBelowSupport) {
     issues.push({ id:'csp_strike_below_support', level:'info', category:'context', scope:'context', strategy, affectsSignal:false, message:`Context: strike $${strike} is below nearest support $${supports[0]} -- assignment may buy into weakness` });
   }
-  if (absDelta && absDelta > deltaMax) {
-    issues.push({ id:'csp_delta_high', level:'yellow', category:'probability', scope:'strategy', strategy, metric:'absDelta', value:absDelta, warnAt:deltaMax, scoreImpact:-20, message:`Delta ${absDelta.toFixed(3)} -- high assignment probability; placeholder probability threshold for owner review` });
+  if (wantsAssignment && absDelta != null) {
+    issues.push({ id:'csp_assignment_intent_delta', level:'info', category:'probability', scope:'context', strategy, metric:'absDelta', value:absDelta, affectsSignal:false, scoreImpact:0, message:`${absDelta.toFixed(3)} delta -- approximately ${Math.round(absDelta * 100)}% probability of assignment at expiration, consistent with assignment intent.` });
+    if (absDelta < 0.15) {
+      issues.push({ id:'csp_assignment_unlikely_delta', level:'info', category:'probability', scope:'context', strategy, metric:'absDelta', value:absDelta, warnAt:0.15, affectsSignal:false, scoreImpact:0, message:`${absDelta.toFixed(3)} delta -- assignment is unlikely given current delta.` });
+    }
+  } else if (absDelta && absDelta > deltaRed) {
+    issues.push({ id:'csp_delta_red', level:'red', category:'probability', scope:'strategy', strategy, metric:'absDelta', value:absDelta, redAt:deltaRed, scoreImpact:-20, message:`Delta ${absDelta.toFixed(3)} is more than 15% above your ${deltaMax} placeholder target` });
+  } else if (absDelta && absDelta > deltaMax) {
+    issues.push({ id:'csp_delta_yellow', level:'yellow', category:'probability', scope:'strategy', strategy, metric:'absDelta', value:absDelta, warnAt:deltaMax, scoreImpact:-10, message:`Delta ${absDelta.toFixed(3)} is above your ${deltaMax} placeholder target` });
   }
   pushDataConfidenceIssues(issues, strategy, data, { greeks: rawGreeks, ivAvailable: rawGreeks?.iv != null });
   const decision = finalizeScoredSignal(issues);
@@ -138,6 +147,7 @@ export function analyzeCSP(data, legs, expDateObj, dte, credit, prefs) {
     price, strike, breakeven,
     cushionPct, beCushionPct,
     collateral, maxProfit, maxLoss,
+    wantsAssignment,
     absDelta, deltaSource,
     greeks: greeks || null,
     positionGreeks,
