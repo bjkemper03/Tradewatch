@@ -132,6 +132,9 @@ export function analyzeIronCondor(data, legs, expDateObj, dte, credit, prefs) {
   } else if (minCushionPct < cushMin) {
     issues.push({ id:'iron_condor_tight_cushion', level:'yellow', category:'risk', scope:'strategy', strategy, metric:'minCushionPct', value:minCushionPct, warnAt:cushMin, scoreImpact:-15, message:`Tight cushion: put side ${putCushionPct}%, call side ${callCushionPct}%` });
   }
+  // Keep IC delta scoring worst-side only until real trade examples validate a
+  // better combined worst-delta + imbalance model. Independent wing deductions
+  // can double-penalize balanced condors that are only mildly over threshold.
   const worstShortDelta = Math.max(putDelta, callDelta);
   if (worstShortDelta > deltaMax) {
     issues.push({ id:'iron_condor_worst_short_delta_high', level:'yellow', category:'probability', scope:'strategy', strategy, metric:'worstShortDelta', value:worstShortDelta, warnAt:deltaMax, scoreImpact:worstShortDelta > deltaMax * 1.1 ? -20 : -10, message:`Worst short-leg delta ${worstShortDelta.toFixed(3)} is above ${deltaMax} placeholder target (put ${putDelta.toFixed(3)}, call ${callDelta.toFixed(3)})` });
