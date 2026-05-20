@@ -148,86 +148,151 @@ function payoffExactRows(d, payoffAt) {
   });
 }
 
+function payoffRange(d, rows) {
+  var legs = analysisLegs(d);
+  var anchors = legs.map(function(l) { return safeNum(l.s); }).filter(function(v) { return v > 0; });
+  rows.forEach(function(r) { if (r.px != null && safeNum(r.px) > 0) anchors.push(safeNum(r.px)); });
+  ['price', 'breakeven', 'lowerBE', 'upperBE', 'putBreakeven', 'callBreakeven', 'shortStrike', 'longStrike', 'shortPut', 'shortCall', 'longPut', 'longCall'].forEach(function(k) {
+    if (d[k] != null && safeNum(d[k]) > 0) anchors.push(safeNum(d[k]));
+  });
+  if (!anchors.length && d.price) anchors.push(safeNum(d.price));
+  var minAnchor = Math.min.apply(null, anchors);
+  var maxAnchor = Math.max.apply(null, anchors);
+  var em = safeNum(d.em || (d.summary && d.summary.expectedMove), 0);
+  var structuralSpan = Math.max(maxAnchor - minAnchor, 0);
+  var span = Math.max(structuralSpan, em ? em * 2 : 0, safeNum(d.price) * 0.08, 1);
+  var pad = Math.max(span * 0.22, safeNum(d.price) * 0.012, 0.5);
+  return {
+    low: Math.max(0.01, minAnchor - pad),
+    high: maxAnchor + pad
+  };
+}
+
+function payoffSamplePoints(d, low, high) {
+  var points = [];
+  for (var i = 0; i <= 120; i++) {
+    var px = low + (high - low) * i / 120;
+    var pnl = estimatePayoff(d, px);
+    if (pnl == null || !Number.isFinite(pnl)) return null;
+    points.push({ px: px, pnl: pnl });
+  }
+  return points;
+}
+
+function payoffPath(points, x, y, keepFn) {
+  var path = '';
+  var active = false;
+  function addPoint(px, pnl) {
+    path += (active ? ' L ' : ' M ') + x({ px: px }).toFixed(1) + ' ' + y(pnl).toFixed(1);
+    active = true;
+  }
+  for (var i = 1; i < points.length; i++) {
+    var a = points[i - 1];
+    var b = points[i];
+    var keepA = keepFn(a.pnl);
+    var keepB = keepFn(b.pnl);
+    if (!keepA && !keepB) {
+      active = false;
+      continue;
+    }
+    if (keepA && !active) addPoint(a.px, a.pnl);
+    if (keepA && keepB) {
+      addPoint(b.px, b.pnl);
+      continue;
+    }
+    if (a.pnl !== b.pnl) {
+      var t = (0 - a.pnl) / (b.pnl - a.pnl);
+      var crossPx = a.px + (b.px - a.px) * t;
+      addPoint(crossPx, 0);
+    }
+    if (!keepA && keepB) addPoint(b.px, b.pnl);
+    if (!keepB) active = false;
+  }
+  return path;
+}
+
+function payoffZoneRects(points, x, pad, h) {
+  var html = '';
+  for (var i = 1; i < points.length; i++) {
+    var a = points[i - 1];
+    var b = points[i];
+    var mid = (a.pnl + b.pnl) / 2;
+    var x1 = x(a);
+    var x2 = x(b);
+    var col = mid >= 0 ? '#22c55e' : '#ef4444';
+    html += '<rect x="' + x1.toFixed(1) + '" y="' + pad + '" width="' + Math.max(0, x2 - x1).toFixed(1) + '" height="' + (h - pad * 2) + '" fill="' + col + '" opacity=".045"/>';
+  }
+  return html;
+}
+
+function payoffLevelRows(rows) {
+  return rows.map(function(m) {
+    var pnlText = m.valueText || fmtMoney(m.pnl);
+    var col = m.valueText === 'Unlimited' ? '#22c55e' : safeNum(m.pnl) >= 0 ? '#22c55e' : '#ef4444';
+    return '<div class="payoff-level-row">' +
+      '<div class="payoff-level-name">' + m.label + '</div>' +
+      '<div class="payoff-level-price">' + (m.px != null ? '$' + safeNum(m.px).toFixed(2) : (m.valueText === 'Unlimited' ? 'Beyond chart' : 'N/A')) + '</div>' +
+      '<div class="payoff-level-pnl" style="color:' + col + '">' + pnlText + '</div>' +
+    '</div>';
+  }).join('');
+}
+
 function renderPayoffShape(d) {
   if (!d.price) return '';
-  var points = d.payoff && d.payoff.points && d.payoff.points.length ? d.payoff.points : null;
-  var low = d.payoff && d.payoff.low ? safeNum(d.payoff.low) : null;
-  var high = d.payoff && d.payoff.high ? safeNum(d.payoff.high) : null;
-  if (!points) {
-    var strikes = (azLegData || []).map(function(l) { return safeNum(l.s); }).filter(function(s) { return s > 0; });
-    var beVals = [d.breakeven, d.lowerBE, d.upperBE, d.putBreakeven, d.callBreakeven]
-      .map(function(v) { return safeNum(v); })
-      .filter(function(v) { return v > 0; });
-    var anchorVals = strikes.concat(beVals).concat([d.price]);
-    var minAnchor = Math.min.apply(null, anchorVals);
-    var maxAnchor = Math.max.apply(null, anchorVals);
-    var span = Math.max(d.price * 0.18, maxAnchor - minAnchor, 1);
-    low = Math.max(0.01, Math.min(d.price * 0.75, minAnchor - span * 0.35));
-    high = Math.max(d.price * 1.25, maxAnchor + span * 0.35);
-    points = [];
-    for (var i = 0; i <= 96; i++) {
-      var px = low + (high - low) * i / 96;
-      var pnl = estimatePayoff(d, px);
-      if (pnl == null || !Number.isFinite(pnl)) return '';
-      points.push({ px: px, pnl: pnl });
-    }
-  }
-  var minY = Math.min.apply(null, points.map(function(p) { return p.pnl; }).concat([0]));
-  var maxY = Math.max.apply(null, points.map(function(p) { return p.pnl; }).concat([0]));
-  if (minY === maxY) { minY -= 100; maxY += 100; }
-  var w = 360, h = 120, pad = 14;
-  function x(p) { return pad + (p.px - low) / (high - low) * (w - pad * 2); }
-  function y(v) { return h - pad - (v - minY) / (maxY - minY) * (h - pad * 2); }
-  var zeroY = y(0);
-  var line = points.map(function(p) { return x(p).toFixed(1) + ',' + y(p.pnl).toFixed(1); }).join(' ');
   function payoffAt(px) {
     var v = estimatePayoff(d, px);
     return v == null || !Number.isFinite(v) ? null : v;
   }
   var checkpointRows = payoffExactRows(d, payoffAt);
+  var range = payoffRange(d, checkpointRows);
+  var low = range.low;
+  var high = range.high;
+  var points = payoffSamplePoints(d, low, high);
+  if (!points) return '';
+  var minY = Math.min.apply(null, points.map(function(p) { return p.pnl; }).concat([0]));
+  var maxY = Math.max.apply(null, points.map(function(p) { return p.pnl; }).concat([0]));
+  if (minY === maxY) { minY -= 100; maxY += 100; }
+  var yPad = Math.max(18, (maxY - minY) * 0.08);
+  minY -= yPad;
+  maxY += yPad;
+  var w = 420, h = 150, pad = 18;
+  function x(p) { return pad + (p.px - low) / (high - low) * (w - pad * 2); }
+  function y(v) { return h - pad - (v - minY) / (maxY - minY) * (h - pad * 2); }
+  var zeroY = y(0);
+  var profitPath = payoffPath(points, x, y, function(v) { return v >= 0; });
+  var lossPath = payoffPath(points, x, y, function(v) { return v < 0; });
+  var currentX = d.price >= low && d.price <= high ? x({ px: safeNum(d.price) }) : null;
   var markers = checkpointRows.filter(function(m) {
     return m.px > 0 && m.px >= low && m.px <= high;
   });
-  var markerSvg = markers.slice(0, 8).map(function(m, idx) {
+  var markerSvg = markers.slice(0, 8).map(function(m) {
     var col = m.kind === 'be' ? 'var(--yellow)' : m.kind === 'profit' ? '#22c55e' : m.kind === 'loss' ? '#ef4444' : 'var(--text2)';
     var mx = x({ px: m.px });
-    var ty = idx % 2 ? h - 5 : 10;
-    var label = m.kind === 'be'
-      ? m.label.replace(/Breakeven/g, 'BE')
-      : '';
-    return '<line x1="' + mx.toFixed(1) + '" y1="' + pad + '" x2="' + mx.toFixed(1) + '" y2="' + (h - pad) + '" stroke="' + col + '" stroke-width="1" stroke-dasharray="3 4" opacity=".65"/>' +
-      '<circle cx="' + mx.toFixed(1) + '" cy="' + y(m.pnl).toFixed(1) + '" r="2.4" fill="' + col + '" stroke="#0b0e17" stroke-width="1"/>' +
-      (label ? '<text x="' + mx.toFixed(1) + '" y="' + ty + '" text-anchor="middle" fill="' + col + '" font-size="6" font-family="monospace">' + label + '</text>' : '');
+    return '<line x1="' + mx.toFixed(1) + '" y1="' + pad + '" x2="' + mx.toFixed(1) + '" y2="' + (h - pad) + '" stroke="' + col + '" stroke-width="1" stroke-dasharray="3 5" opacity=".7"/>' +
+      '<circle cx="' + mx.toFixed(1) + '" cy="' + y(m.pnl).toFixed(1) + '" r="3" fill="' + col + '" stroke="#0b0e17" stroke-width="1.3"><title>' + m.label + ' ' + (m.px != null ? '$' + safeNum(m.px).toFixed(2) : '') + '</title></circle>';
   }).join('');
   payoffShapeData = { low: low, high: high, minY: minY, maxY: maxY, w: w, h: h, pad: pad, result: d };
-  return '<div class="card">' +
-    '<div style="display:flex;justify-content:space-between;gap:10px;align-items:center;margin-bottom:8px">' +
-      '<div style="font-size:10px;color:var(--text3);font-weight:600;text-transform:uppercase;letter-spacing:.5px">P/L Shape at Expiration</div>' +
-      '<div style="font-size:9px;color:var(--text3);font-family:var(--mono)">drag across curve</div>' +
+  return '<div class="card payoff-card">' +
+    '<div class="payoff-head">' +
+      '<div><div class="analysis-panel-label">Expiration P/L map</div><div class="payoff-range">Focused on current price, strikes, and breakeven</div></div>' +
+      '<div class="payoff-range">$' + low.toFixed(0) + ' to $' + high.toFixed(0) + '</div>' +
     '</div>' +
-    '<div style="position:relative">' +
-    '<svg viewBox="0 0 ' + w + ' ' + h + '" onpointermove="payoffShapeMove(event,this)" onpointerleave="payoffShapeLeave()" style="width:100%;height:150px;display:block;background:var(--surface2);border:1px solid var(--border);border-radius:8px;touch-action:none;cursor:crosshair">' +
+    '<div class="payoff-chart-wrap">' +
+    '<svg viewBox="0 0 ' + w + ' ' + h + '" onpointermove="payoffShapeMove(event,this)" onpointerleave="payoffShapeLeave()" class="payoff-svg">' +
+      payoffZoneRects(points, x, pad, h) +
       '<line x1="' + pad + '" y1="' + zeroY.toFixed(1) + '" x2="' + (w - pad) + '" y2="' + zeroY.toFixed(1) + '" stroke="var(--border2)" stroke-width="1"/>' +
+      (currentX != null ? '<line x1="' + currentX.toFixed(1) + '" y1="' + pad + '" x2="' + currentX.toFixed(1) + '" y2="' + (h - pad) + '" stroke="var(--blue2)" stroke-width="1.2" opacity=".85"/>' : '') +
       markerSvg +
-      '<polyline points="' + line + '" fill="none" stroke="var(--green)" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>' +
+      (lossPath ? '<path d="' + lossPath + '" fill="none" stroke="#ef4444" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"/>' : '') +
+      (profitPath ? '<path d="' + profitPath + '" fill="none" stroke="#22c55e" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"/>' : '') +
       '<line id="payoff-cursor-line" x1="0" y1="' + pad + '" x2="0" y2="' + (h - pad) + '" stroke="var(--blue2)" stroke-width="1" stroke-dasharray="4 4" style="display:none"/>' +
       '<circle id="payoff-cursor-dot" cx="0" cy="0" r="3" fill="var(--blue2)" stroke="#0b0e17" stroke-width="1.5" style="display:none"/>' +
     '</svg>' +
     '<div id="payoff-tip" style="display:none;position:absolute;width:128px;background:var(--surface3);border:1px solid var(--border2);border-radius:8px;padding:7px 8px;box-shadow:0 8px 24px rgba(0,0,0,.35);pointer-events:none;z-index:3"></div>' +
     '</div>' +
-    '<div style="display:flex;justify-content:space-between;font-size:10px;color:var(--text3);margin-top:5px;font-family:var(--mono)"><span>$' + low.toFixed(0) + '</span><span>Current $' + d.price + '</span><span>$' + high.toFixed(0) + '</span></div>' +
-    '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(132px,1fr));gap:6px;margin-top:10px">' +
-      checkpointRows.map(function(m) {
-        var col = m.valueText === 'Unlimited' ? '#22c55e' : m.pnl >= 0 ? '#22c55e' : '#ef4444';
-        return '<div style="background:var(--surface2);border:1px solid var(--border);border-radius:7px;padding:7px 8px;min-width:0">' +
-          '<div style="font-size:9px;color:var(--text3);font-weight:700;text-transform:uppercase;letter-spacing:.4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + m.label + '</div>' +
-          '<div style="display:flex;justify-content:space-between;gap:8px;align-items:baseline;margin-top:3px;font-family:var(--mono)">' +
-            '<span style="font-size:11px;color:var(--text2)">' + (m.px != null ? '$' + safeNum(m.px).toFixed(2) : (m.valueText === 'Unlimited' ? 'Beyond chart' : 'N/A')) + '</span>' +
-            '<span style="font-size:12px;font-weight:800;color:' + col + '">' + (m.valueText || fmtMoney(m.pnl)) + '</span>' +
-          '</div>' +
-          (m.note ? '<div style="font-size:9px;color:var(--text3);line-height:1.35;margin-top:3px">' + m.note + '</div>' : '') +
-        '</div>';
-      }).join('') +
+    '<div class="payoff-axis"><span>$' + low.toFixed(0) + '</span><span>Current $' + safeNum(d.price).toFixed(2) + '</span><span>$' + high.toFixed(0) + '</span></div>' +
+    '<div class="payoff-levels">' +
+      payoffLevelRows(checkpointRows) +
     '</div>' +
   '</div>';
 }
