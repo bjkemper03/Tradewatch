@@ -7,7 +7,18 @@ import { calcExpectedMove, calcCondorProbs } from '../probability.js';
 import { safeNum, pct } from './sharedMath.js';
 import { bsDelta, buildKeyLegGreeks, buildPositionGreeks, getBestVol, getLegGreek } from './sharedGreeks.js';
 import { payoffSummary } from './sharedPayoff.js';
-import { checkEarningsRisk, getSignal, modelNotes } from './sharedContext.js';
+import {
+  checkEarningsRisk,
+  finalizeScoredSignal,
+  modelNotes,
+  pushAccountRiskIssues,
+  pushCompletenessIssue,
+  pushCushionIssue,
+  pushDataConfidenceIssues,
+  pushDteFitIssue,
+  pushEarningsScoreIssue,
+  pushUndefinedRiskIssue,
+} from './sharedContext.js';
 
 export function analyzeIronCondor(data, legs, expDateObj, dte, credit, prefs) {
   const { price, hv30, supports, resistances, earnings, chain } = data;
@@ -91,21 +102,55 @@ export function analyzeIronCondor(data, legs, expDateObj, dte, credit, prefs) {
 
   // Issues
   const issues = [];
+  const strategy = isIronButterfly ? 'iron_butterfly' : 'iron_condor';
   const cushMin  = prefs?.cushionMin || 5;
   const deltaMax = prefs?.deltaHigh  || 0.30;
 
-  if (payoff.maxLossUnlimited)             issues.push({ level:'critical', weight:6, msg:'Undefined/naked risk detected -- not beginner-safe' });
-  if (earningsCheck.risk)                  issues.push({ level:'critical', weight:5, msg:`Earnings ${earningsCheck.date} within expiration` });
-  if (minCushionPct < cushMin)             issues.push({ level:'critical', weight:5, msg:`Tight cushion: put side ${putCushionPct}%, call side ${callCushionPct}%` });
-  if (putDelta > deltaMax)                 issues.push({ level:'warning', weight:3, msg:`Put delta ${putDelta.toFixed(3)} above ${deltaMax} target` });
-  if (callDelta > deltaMax)                issues.push({ level:'warning', weight:3, msg:`Call delta ${callDelta.toFixed(3)} above ${deltaMax} target` });
-  if (isIronButterfly)                     issues.push({ level:'warning',  msg:'Iron butterfly -- max profit only if price pins at strike. Very tight target.' });
-  if (price < shortPut || price > shortCall) issues.push({ level:'critical', weight:6, msg:'Price already outside the tent -- do not open' });
+  if (!payoff.maxLossUnlimited && (maxLoss == null || !Number.isFinite(maxLoss) || maxProfit == null || !Number.isFinite(maxProfit))) {
+    pushCompletenessIssue(issues, strategy, 'maxLoss', 'Iron condor risk/reward could not be calculated reliably');
+  }
+  if (payoff.maxLossUnlimited) {
+    pushUndefinedRiskIssue(issues, strategy, { message: 'Undefined risk detected in an iron condor model' });
+  }
+  pushAccountRiskIssues(issues, strategy, maxLoss, prefs);
+  pushEarningsScoreIssue(issues, strategy, earningsCheck, dte);
+  pushCushionIssue(issues, strategy, {
+    distance: Math.min(price - shortPut, shortCall - price),
+    expectedMove: em,
+    metric: 'shortStrikeCushionToExpectedMove',
+    messagePrefix: 'Iron condor nearest short-strike cushion',
+  });
+  const creditWingPct = maxWidth > 0 ? parseFloat((cr / maxWidth * 100).toFixed(1)) : null;
+  if (creditWingPct != null && creditWingPct < 10) {
+    issues.push({ id:'iron_condor_efficiency_low', level:'red', category:'compensation', scope:'strategy', strategy, metric:'creditWingPct', value:creditWingPct, redAt:10, scoreImpact:-25, message:`Credit is ${creditWingPct}% of widest wing; placeholder efficiency threshold for owner review` });
+  } else if (creditWingPct != null && creditWingPct < 20) {
+    issues.push({ id:'iron_condor_efficiency_moderate', level:'yellow', category:'compensation', scope:'strategy', strategy, metric:'creditWingPct', value:creditWingPct, warnAt:20, scoreImpact:-15, message:`Credit is ${creditWingPct}% of widest wing; placeholder efficiency threshold for owner review` });
+  }
+  pushDteFitIssue(issues, strategy, dte, { min:21, max:45, label:'iron-condor' });
+  if (minCushionPct < 0) {
+    issues.push({ id:'iron_condor_price_outside_tent', level:'red', category:'risk', scope:'strategy', strategy, metric:'minCushionPct', value:minCushionPct, redAt:0, scoreImpact:-30, message:'Price already outside the tent -- do not open' });
+  } else if (minCushionPct < cushMin) {
+    issues.push({ id:'iron_condor_tight_cushion', level:'yellow', category:'risk', scope:'strategy', strategy, metric:'minCushionPct', value:minCushionPct, warnAt:cushMin, scoreImpact:-15, message:`Tight cushion: put side ${putCushionPct}%, call side ${callCushionPct}%` });
+  }
+  // Keep IC delta scoring worst-side only until real trade examples validate a
+  // better combined worst-delta + imbalance model. Independent wing deductions
+  // can double-penalize balanced condors that are only mildly over threshold.
+  const worstShortDelta = Math.max(putDelta, callDelta);
+  if (worstShortDelta > deltaMax) {
+    issues.push({ id:'iron_condor_worst_short_delta_high', level:'yellow', category:'probability', scope:'strategy', strategy, metric:'worstShortDelta', value:worstShortDelta, warnAt:deltaMax, scoreImpact:worstShortDelta > deltaMax * 1.1 ? -20 : -10, message:`Worst short-leg delta ${worstShortDelta.toFixed(3)} is above ${deltaMax} placeholder target (put ${putDelta.toFixed(3)}, call ${callDelta.toFixed(3)})` });
+  }
+  if (isIronButterfly) {
+    issues.push({ id:'iron_butterfly_pin_risk', level:'yellow', category:'structure', scope:'strategy', strategy, scoreImpact:-10, message:'Iron butterfly -- max profit only if price pins at strike. Very tight target.' });
+  }
+  pushDataConfidenceIssues(issues, strategy, data, { greeks: putGreeks || callGreeks, ivAvailable: putGreeks?.iv != null || callGreeks?.iv != null });
+  const decision = finalizeScoredSignal(issues);
 
   return {
-    strategyGroup: isIronButterfly ? 'iron_butterfly' : 'iron_condor',
-    signal: getSignal(issues),
-    issues,
+    strategyGroup: strategy,
+    signal: decision.signal,
+    issues: decision.issues,
+    score: decision.score,
+    scoreBand: decision.scoreBand,
 
     price, shortPut, longPut, shortCall, longCall,
     putWidth, callWidth, maxWidth,
@@ -131,6 +176,7 @@ export function analyzeIronCondor(data, legs, expDateObj, dte, credit, prefs) {
     supports, resistances,
     earningsRisk: earningsCheck.risk,
     earningsDate: earningsCheck.date,
+    earningsUnknown: earningsCheck.unknown,
     isIronButterfly,
     modelNotes: modelNotes(data, {
       greeks: putGreeks || callGreeks,

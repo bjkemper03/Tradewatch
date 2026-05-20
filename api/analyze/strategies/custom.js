@@ -5,7 +5,16 @@
 import { pct, safeNum } from './sharedMath.js';
 import { buildPositionGreeks } from './sharedGreeks.js';
 import { payoffSummary, firstBreakeven, riskFieldsFromPayoff } from './sharedPayoff.js';
-import { checkEarningsRisk, getSignal, modelNotes } from './sharedContext.js';
+import {
+  checkEarningsRisk,
+  finalizeScoredSignal,
+  modelNotes,
+  pushAccountRiskIssues,
+  pushCompletenessIssue,
+  pushDataConfidenceIssues,
+  pushEarningsScoreIssue,
+  pushUndefinedRiskIssue,
+} from './sharedContext.js';
 
 export function analyzeCustomPayoff(data, legs, expDateObj, dte, credit, prefs, isCredit = true) {
   const { price, hv30, supports, resistances, earnings, chain } = data;
@@ -15,21 +24,30 @@ export function analyzeCustomPayoff(data, legs, expDateObj, dte, credit, prefs, 
   const earningsCheck = checkEarningsRisk(earnings, expDateObj);
   const positionGreeks = buildPositionGreeks(chain, legs, hv30 || 0.30, price, dte);
   const issues = [];
+  const strategy = 'custom';
 
+  if (!payoff.maxLossUnlimited && (payoff.maxLoss == null || !Number.isFinite(payoff.maxLoss))) {
+    pushCompletenessIssue(issues, strategy, 'maxLoss', 'Custom payoff risk could not be calculated reliably');
+  }
   if (payoff.maxLossUnlimited) {
-    issues.push({ level:'critical', weight:6, msg:'Custom structure has undefined/naked risk' });
+    pushUndefinedRiskIssue(issues, strategy, {
+      message: 'Custom structure has undefined or naked risk',
+    });
   }
-  if (earningsCheck.risk) {
-    issues.push({ level:'critical', weight:5, msg:`Earnings ${earningsCheck.date} within expiration` });
-  }
+  pushAccountRiskIssues(issues, strategy, payoff.maxLoss, prefs);
+  pushEarningsScoreIssue(issues, strategy, earningsCheck, dte);
   if (!payoff.breakevens.length) {
-    issues.push({ level:'warning', weight:2, msg:'No breakeven found in modeled expiration range' });
+    issues.push({ id:'custom_no_breakeven', level:'info', category:'model', scope:'context', strategy, metric:'breakevens', value:0, scoreImpact:0, affectsSignal:false, message:'No breakeven found in modeled expiration range' });
   }
+  pushDataConfidenceIssues(issues, strategy, data, { greeks: positionGreeks, ivAvailable: false });
+  const decision = finalizeScoredSignal(issues);
 
   return {
     strategyGroup: 'custom',
-    signal: getSignal(issues),
-    issues,
+    signal: decision.signal,
+    issues: decision.issues,
+    score: decision.score,
+    scoreBand: decision.scoreBand,
     price,
     entryType: isCredit ? 'credit' : 'debit',
     entryPremium: entry,
@@ -44,6 +62,7 @@ export function analyzeCustomPayoff(data, legs, expDateObj, dte, credit, prefs, 
     resistances,
     earningsRisk: earningsCheck.risk,
     earningsDate: earningsCheck.date,
+    earningsUnknown: earningsCheck.unknown,
     modelNotes: modelNotes(data, {
       structureNote: 'Custom analysis uses the generic payoff engine from the exact entered legs. Probability and strategy-specific quality checks are intentionally limited.',
     }),

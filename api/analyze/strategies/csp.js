@@ -7,7 +7,18 @@ import { calcExpectedMove, calcPOW, calcWheelScenarios } from '../probability.js
 import { safeNum, pct } from './sharedMath.js';
 import { bsDelta, buildKeyLegGreeks, buildPositionGreeks, completeGreeks, getBestVol, getLegGreek } from './sharedGreeks.js';
 import { payoffSummary, firstBreakeven } from './sharedPayoff.js';
-import { checkEarningsRisk, getSignal, modelNotes } from './sharedContext.js';
+import {
+  checkEarningsRisk,
+  finalizeScoredSignal,
+  modelNotes,
+  pushAccountRiskIssues,
+  pushCompletenessIssue,
+  pushCushionIssue,
+  pushDataConfidenceIssues,
+  pushDteFitIssue,
+  pushEarningsScoreIssue,
+  pushUndefinedRiskIssue,
+} from './sharedContext.js';
 
 export function analyzeCSP(data, legs, expDateObj, dte, credit, prefs) {
   const { price, hv30, supports, resistances, earnings, chain } = data;
@@ -77,25 +88,66 @@ export function analyzeCSP(data, legs, expDateObj, dte, credit, prefs) {
   const strikeBelowSupport   = supports.length && strike < supports[0];
 
   const issues = [];
+  const strategy = 'csp';
   const cushMin  = prefs?.cushionMin || 3; // lower threshold for CSPs -- assignment is acceptable
   const deltaMax = prefs?.deltaHigh  || 0.40; // can tolerate higher delta on CSPs
+  const deltaRed = parseFloat((deltaMax * 1.15).toFixed(3));
+  const wantsAssignment = prefs?.cspWantsAssignment ?? prefs?.wantsAssignment ?? false;
 
-  if (earningsCheck.risk)    issues.push({ level:'critical', msg:`Earnings ${earningsCheck.date} within expiration -- binary risk` });
-  if (cushionPct < 0)        issues.push({ level:'critical', msg:`Strike $${strike} above current price $${price} -- ITM put` });
-  if (strikeBelowSupport)    issues.push({ level:'warning',  msg:`Strike $${strike} below nearest support $${supports[0]} -- buying into weakness if assigned` });
-  if (absDelta && absDelta > deltaMax) issues.push({ level:'warning', msg:`Delta ${absDelta.toFixed(3)} -- high assignment probability` });
+  if (!payoff.maxLossUnlimited && (maxLoss == null || !Number.isFinite(maxLoss) || maxProfit == null || !Number.isFinite(maxProfit))) {
+    pushCompletenessIssue(issues, strategy, 'maxLoss', 'CSP risk/reward could not be calculated reliably');
+  }
+  if (payoff.maxLossUnlimited) {
+    pushUndefinedRiskIssue(issues, strategy, { message: 'Undefined risk detected in a cash-secured put model' });
+  }
+  pushAccountRiskIssues(issues, strategy, maxLoss, prefs);
+  pushEarningsScoreIssue(issues, strategy, earningsCheck, dte);
+  pushCushionIssue(issues, strategy, {
+    distance: price - breakeven,
+    expectedMove: em,
+    metric: 'beCushionToExpectedMove',
+    messagePrefix: 'CSP breakeven cushion',
+  });
+  const premiumCollateralPct = collateral > 0 ? parseFloat((cr * 100 / collateral * 100).toFixed(2)) : null;
+  if (premiumCollateralPct != null && premiumCollateralPct < 1) {
+    issues.push({ id:'csp_efficiency_low', level:'red', category:'compensation', scope:'strategy', strategy, metric:'premiumCollateralPct', value:premiumCollateralPct, redAt:1, scoreImpact:-25, message:`Premium is ${premiumCollateralPct}% of collateral; placeholder efficiency threshold for owner review` });
+  } else if (premiumCollateralPct != null && premiumCollateralPct < 2) {
+    issues.push({ id:'csp_efficiency_moderate', level:'yellow', category:'compensation', scope:'strategy', strategy, metric:'premiumCollateralPct', value:premiumCollateralPct, warnAt:2, scoreImpact:-15, message:`Premium is ${premiumCollateralPct}% of collateral; placeholder efficiency threshold for owner review` });
+  }
+  pushDteFitIssue(issues, strategy, dte, { min:21, max:45, label:'CSP' });
+  if (cushionPct < 0) {
+    issues.push({ id:'csp_itm_put', level:'red', category:'risk', scope:'strategy', strategy, metric:'cushionPct', value:cushionPct, redAt:0, scoreImpact:-30, message:`Strike $${strike} above current price $${price} -- ITM put` });
+  }
+  if (strikeBelowSupport) {
+    issues.push({ id:'csp_strike_below_support', level:'info', category:'context', scope:'context', strategy, affectsSignal:false, message:`Context: strike $${strike} is below nearest support $${supports[0]} -- assignment may buy into weakness` });
+  }
+  if (wantsAssignment && absDelta != null) {
+    issues.push({ id:'csp_assignment_intent_delta', level:'info', category:'probability', scope:'context', strategy, metric:'absDelta', value:absDelta, affectsSignal:false, scoreImpact:0, message:`${absDelta.toFixed(3)} delta -- approximately ${Math.round(absDelta * 100)}% probability of assignment at expiration, consistent with assignment intent.` });
+    if (absDelta < 0.15) {
+      issues.push({ id:'csp_assignment_unlikely_delta', level:'info', category:'probability', scope:'context', strategy, metric:'absDelta', value:absDelta, warnAt:0.15, affectsSignal:false, scoreImpact:0, message:`${absDelta.toFixed(3)} delta -- assignment is unlikely given current delta.` });
+    }
+  } else if (absDelta && absDelta > deltaRed) {
+    issues.push({ id:'csp_delta_red', level:'red', category:'probability', scope:'strategy', strategy, metric:'absDelta', value:absDelta, redAt:deltaRed, scoreImpact:-20, message:`Delta ${absDelta.toFixed(3)} is more than 15% above your ${deltaMax} placeholder target` });
+  } else if (absDelta && absDelta > deltaMax) {
+    issues.push({ id:'csp_delta_yellow', level:'yellow', category:'probability', scope:'strategy', strategy, metric:'absDelta', value:absDelta, warnAt:deltaMax, scoreImpact:-10, message:`Delta ${absDelta.toFixed(3)} is above your ${deltaMax} placeholder target` });
+  }
+  pushDataConfidenceIssues(issues, strategy, data, { greeks: rawGreeks, ivAvailable: rawGreeks?.iv != null });
+  const decision = finalizeScoredSignal(issues);
 
   // CSP-specific: flag if yield is very low but don't penalize -- show context instead
   const yieldData = wheelData?.ifNotAssigned?.yieldData;
 
   return {
     strategyGroup: 'csp',
-    signal: getSignal(issues),
-    issues,
+    signal: decision.signal,
+    issues: decision.issues,
+    score: decision.score,
+    scoreBand: decision.scoreBand,
 
     price, strike, breakeven,
     cushionPct, beCushionPct,
     collateral, maxProfit, maxLoss,
+    wantsAssignment,
     absDelta, deltaSource,
     greeks: greeks || null,
     positionGreeks,
@@ -124,6 +176,7 @@ export function analyzeCSP(data, legs, expDateObj, dte, credit, prefs) {
 
     earningsRisk: earningsCheck.risk,
     earningsDate: earningsCheck.date,
+    earningsUnknown: earningsCheck.unknown,
 
     // Framing note -- assignment is not a loss in wheel strategy
     wheelNote: 'Assignment means you buy shares at your effective cost basis of $' + breakeven.toFixed(2) + '. This is the goal in wheel strategy.',

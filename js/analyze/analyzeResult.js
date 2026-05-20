@@ -172,7 +172,7 @@ function cushionSubtext(d) {
 function renderTopPanels(d) {
   var s = d.summary || {};
   var dte = s.dte || { label: d.dte != null ? d.dte + ' DTE' : 'Unknown', tone: 'neutral', detail: 'No expiration date' };
-  var earn = s.earnings || { label: d.earningsRisk ? 'Earnings risk' : 'No earnings risk', tone: d.earningsRisk ? 'bad' : 'good', detail: d.earningsDate || 'Unknown' };
+  var earn = s.earnings || { label: d.earningsRisk ? 'Earnings risk' : (d.earningsDate ? 'No earnings risk' : 'Earnings unknown'), tone: d.earningsRisk ? 'bad' : (d.earningsDate ? 'good' : 'neutral'), detail: d.earningsDate || 'Date unavailable' };
   var liq = s.liquidity || { label: 'Unknown', tone: 'neutral', detail: 'Liquidity unavailable' };
   var liqTone = liq.grade === 'Good' ? 'good' : liq.grade === 'Okay' ? 'warn' : liq.grade === 'Thin' || liq.grade === 'Poor' ? 'bad' : 'neutral';
 
@@ -198,9 +198,11 @@ function renderTopPanels(d) {
 function renderHeaderChips(d) {
   var s = d.summary || {};
   var dte = s.dte || { label: d.dte != null ? d.dte + ' DTE' : 'Unknown', tone: 'neutral', detail: '' };
-  var earn = s.earnings || { label: d.earningsRisk ? 'Earnings risk' : 'No earnings risk', tone: d.earningsRisk ? 'bad' : 'good', detail: d.earningsDate || 'Unknown' };
+  var earn = s.earnings || { label: d.earningsRisk ? 'Earnings risk' : (d.earningsDate ? 'No earnings risk' : 'Earnings unknown'), tone: d.earningsRisk ? 'bad' : (d.earningsDate ? 'good' : 'neutral'), detail: d.earningsDate || 'Date unavailable' };
   var liq = s.liquidity || { label: 'Unknown', grade: 'Unknown', detail: 'Check bid/ask before entry' };
   var liqTone = liq.grade === 'Good' ? 'good' : liq.grade === 'Okay' ? 'warn' : liq.grade === 'Thin' || liq.grade === 'Poor' ? 'bad' : 'neutral';
+  var scoreKnown = d.score != null && Number.isFinite(safeNum(d.score));
+  var scoreTone = !scoreKnown ? 'neutral' : safeNum(d.score) >= 75 ? 'good' : safeNum(d.score) >= 50 ? 'warn' : 'bad';
 
   function chip(label, value, detail, tone) {
     return '<div class="analysis-chip">' +
@@ -212,6 +214,7 @@ function renderHeaderChips(d) {
 
   var liqDetail = liq.avgBidAsk != null ? 'Bid/ask $' + liq.avgBidAsk : (liq.detail || '');
   return '<div class="analysis-chip-row">' +
+    chip('Score', scoreKnown ? String(safeNum(d.score)) : 'N/A', d.signal === 'INCOMPLETE' ? 'Incomplete' : '100 minus deductions', scoreTone) +
     chip('DTE', dte.label, dte.detail, dte.tone) +
     chip('Earnings', earn.label, earn.detail, earn.tone) +
     chip('Liquidity', liq.label || liq.grade || 'Unknown', liqDetail, liqTone) +
@@ -283,6 +286,11 @@ function renderAnalysisResult(d) {
   var sigLabel = sig === 'GO' ? 'GO' : sig === 'NO-GO' ? 'NO-GO' : sig === 'INCOMPLETE' ? 'INCOMPLETE' : 'CAUTION';
   var issues   = d.issues || [];
   var reasons  = issues.length ? issues.map(function(i) { return i.msg; }) : ['All checks passed -- structure looks solid'];
+  var band = d.scoreBand && d.scoreBand.label
+    ? '<div style="font-size:10px;color:var(--text3);margin-top:6px">' + esc(d.scoreBand.label) +
+      (d.scoreBand.flaggedMetrics && d.scoreBand.flaggedMetrics.length ? ': ' + esc(d.scoreBand.flaggedMetrics.join(', ')) : '') +
+      '</div>'
+    : '';
 
   var heroTone = sig === 'GO' ? 'good' : sig === 'NO-GO' ? 'bad' : 'warn';
   var cleanHtml = '<div class="analysis-shell">' +
@@ -297,6 +305,7 @@ function renderAnalysisResult(d) {
             return '<span style="color:' + col + '">' + r + '</span>';
           }).join('<br>') +
         '</div>' +
+        band +
         (fmtAsOf(d.lastDate) ? '<div style="font-size:10px;color:var(--text3);margin-top:6px">Quote as of ' + fmtAsOf(d.lastDate) + '</div>' : '') +
       '</div>' +
       renderHeaderChips(d) +
