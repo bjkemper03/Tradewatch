@@ -67,7 +67,7 @@ export function sortIssues(issues = []) {
     if (blockingDiff) return blockingDiff;
     const levelDiff = (LEVEL_RANK[aLevel] ?? 9) - (LEVEL_RANK[bLevel] ?? 9);
     if (levelDiff) return levelDiff;
-    const scoreDiff = (b.scoreImpact || 0) - (a.scoreImpact || 0);
+    const scoreDiff = (a.scoreImpact || 0) - (b.scoreImpact || 0);
     if (scoreDiff) return scoreDiff;
     return (CATEGORY_RANK[a.category] ?? 99) - (CATEGORY_RANK[b.category] ?? 99);
   });
@@ -116,7 +116,7 @@ export function scoreBand(score, issues = []) {
     .map(issue => issue.metric || issue.category || issue.id)
     .filter(Boolean);
   if (score >= 70 && score <= 74) return { zone: 'approaching_go', label: 'CAUTION, approaching GO', flaggedMetrics };
-  if (score >= 75 && score <= 80) return { zone: 'approaching_caution', label: 'GO, approaching CAUTION', flaggedMetrics };
+  if (score >= 75 && score <= 79) return { zone: 'approaching_caution', label: 'GO, approaching CAUTION', flaggedMetrics };
   if (score >= 50 && score <= 54) return { zone: 'approaching_no_go', label: 'CAUTION, approaching NO-GO', flaggedMetrics };
   if (score >= 55 && score <= 59) return { zone: 'weakening', label: 'CAUTION, weakening', flaggedMetrics };
   return { zone: 'normal', label: '', flaggedMetrics };

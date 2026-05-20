@@ -128,9 +128,9 @@ export function analyzeIronCondor(data, legs, expDateObj, dte, credit, prefs) {
   }
   pushDteFitIssue(issues, strategy, dte, { min:21, max:45, label:'iron-condor' });
   if (minCushionPct < 0) {
-    issues.push({ id:'iron_condor_price_outside_tent', level:'red', category:'risk', scope:'strategy', strategy, metric:'minCushionPct', value:minCushionPct, scoreImpact:0, message:'Price already outside the tent -- do not open' });
+    issues.push({ id:'iron_condor_price_outside_tent', level:'red', category:'risk', scope:'strategy', strategy, metric:'minCushionPct', value:minCushionPct, redAt:0, scoreImpact:-30, message:'Price already outside the tent -- do not open' });
   } else if (minCushionPct < cushMin) {
-    issues.push({ id:'iron_condor_tight_cushion', level:'yellow', category:'risk', scope:'strategy', strategy, metric:'minCushionPct', value:minCushionPct, warnAt:cushMin, scoreImpact:0, message:`Tight cushion: put side ${putCushionPct}%, call side ${callCushionPct}%` });
+    issues.push({ id:'iron_condor_tight_cushion', level:'yellow', category:'risk', scope:'strategy', strategy, metric:'minCushionPct', value:minCushionPct, warnAt:cushMin, scoreImpact:-15, message:`Tight cushion: put side ${putCushionPct}%, call side ${callCushionPct}%` });
   }
   const worstShortDelta = Math.max(putDelta, callDelta);
   if (worstShortDelta > deltaMax) {

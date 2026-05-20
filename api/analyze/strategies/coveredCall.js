@@ -102,7 +102,7 @@ export function analyzeCoveredCall(data, legs, expDateObj, dte, credit, prefs) {
   }
   pushDteFitIssue(issues, strategy, dte, { min:21, max:45, label:'covered-call' });
   if (strike < price && !wantsAssignment) {
-    issues.push({ id:'covered_call_itm_assignment_risk', level:'red', category:'risk', scope:'strategy', strategy, metric:'strike', value:strike, scoreImpact:0, message:`Strike $${strike} below current price $${price} -- ITM call, immediate assignment risk` });
+    issues.push({ id:'covered_call_itm_assignment_risk', level:'red', category:'risk', scope:'strategy', strategy, metric:'strike', value:strike, redAt:price, scoreImpact:-15, message:`Strike $${strike} below current price $${price} -- ITM call, immediate assignment risk` });
   } else if (strike < price) {
     issues.push({ id:'covered_call_itm_assignment_intent', level:'info', category:'context', scope:'context', strategy, metric:'strike', value:strike, scoreImpact:0, message:`Strike $${strike} below current price $${price}; assignment is likely and marked as acceptable intent` });
   }

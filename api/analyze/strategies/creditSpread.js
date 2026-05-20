@@ -7,7 +7,7 @@ import { calcExpectedMove, calcPOW, calcCreditSpreadProbs } from '../probability
 import { safeNum, pct } from './sharedMath.js';
 import { bsDelta, buildKeyLegGreeks, buildPositionGreeks, getBestVol, getLegGreek } from './sharedGreeks.js';
 import { payoffSummary, firstBreakeven } from './sharedPayoff.js';
-import { checkEarningsRisk, finalizeScoredSignal, modelNotes, pushDataConfidenceIssues } from './sharedContext.js';
+import { checkEarningsRisk, finalizeScoredSignal, modelNotes, pushDataConfidenceIssues, pushEarningsScoreIssue } from './sharedContext.js';
 
 export function analyzeCreditSpread(data, legs, expDateObj, dte, credit, prefs) {
   const { price, hv30, supports, resistances, earnings, chain } = data;
@@ -116,13 +116,6 @@ export function analyzeCreditSpread(data, legs, expDateObj, dte, credit, prefs) 
     ? parseFloat((maxLoss / accountSize * 100).toFixed(1))
     : null;
   const deltaRed = parseFloat((deltaMax * 1.10).toFixed(3));
-  const earningsDays = earningsCheck.date
-    ? Math.ceil((new Date(earningsCheck.date + 'T12:00:00') - new Date()) / 86400000)
-    : null;
-  const earningsFirstHalf = earningsDays != null && dte
-    ? earningsDays <= Math.ceil(dte / 2)
-    : true;
-
   if (absDelta == null) {
     issues.push({ id:'pcs_delta_unavailable', level:'red', category:'completeness', scope:'universal', strategy:'credit_spread', metric:'absDelta', blocking:true, scoreImpact:0, message:'Delta unavailable from market data or estimate, so PCS scoring is incomplete' });
   }
@@ -137,13 +130,7 @@ export function analyzeCreditSpread(data, legs, expDateObj, dte, credit, prefs) 
   } else if (maxLossPctAccount != null && maxLossPctAccount > 50) {
     issues.push({ id:'account_risk_over_50', level:'yellow', category:'account', scope:'universal', metric:'maxLossPctAccount', value:maxLossPctAccount, warnAt:50, scoreImpact:-35, message:`Max loss is ${maxLossPctAccount}% of account size` });
   }
-  if (earningsCheck.risk && earningsFirstHalf) {
-    issues.push({ id:'earnings_first_half', level:'red', category:'earnings', scope:'universal', strategy:'credit_spread', metric:'dte', value:dte, scoreImpact:dte < 30 ? -45 : -25, message:`Earnings ${earningsCheck.date} falls in the first half of this trade` });
-  } else if (earningsCheck.risk) {
-    issues.push({ id:'earnings_second_half', level:'yellow', category:'earnings', scope:'universal', strategy:'credit_spread', metric:'dte', value:dte, scoreImpact:dte < 90 ? -20 : 0, message:`Earnings ${earningsCheck.date} falls before expiration` });
-  } else if (earningsCheck.unknown) {
-    issues.push({ id:'earnings_unknown', level:'info', category:'earnings', scope:'context', strategy:'credit_spread', affectsSignal:false, scoreImpact:0, message:'Earnings date unavailable; confirm event risk before entry' });
-  }
+  pushEarningsScoreIssue(issues, 'credit_spread', earningsCheck, dte);
   if (cushionPct < 0) {
     issues.push({ id:'pcs_price_beyond_short_strike', level:'red', category:'risk', scope:'strategy', strategy:'credit_spread', metric:'cushionPct', value:cushionPct, redAt:0, scoreImpact:-30, message:`Price is already beyond the short strike risk line (${cushionPct}% cushion)` });
   } else if (cushionPct < cushMin) {

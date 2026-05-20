@@ -114,7 +114,7 @@ export function analyzeCSP(data, legs, expDateObj, dte, credit, prefs) {
   }
   pushDteFitIssue(issues, strategy, dte, { min:21, max:45, label:'CSP' });
   if (cushionPct < 0) {
-    issues.push({ id:'csp_itm_put', level:'red', category:'risk', scope:'strategy', strategy, metric:'cushionPct', value:cushionPct, scoreImpact:0, message:`Strike $${strike} above current price $${price} -- ITM put` });
+    issues.push({ id:'csp_itm_put', level:'red', category:'risk', scope:'strategy', strategy, metric:'cushionPct', value:cushionPct, redAt:0, scoreImpact:-30, message:`Strike $${strike} above current price $${price} -- ITM put` });
   }
   if (strikeBelowSupport) {
     issues.push({ id:'csp_strike_below_support', level:'info', category:'context', scope:'context', strategy, affectsSignal:false, message:`Context: strike $${strike} is below nearest support $${supports[0]} -- assignment may buy into weakness` });
