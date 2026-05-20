@@ -9,11 +9,13 @@ import { bsDelta, buildKeyLegGreeks, buildPositionGreeks, getBestVol, getLegGree
 import { payoffSummary, firstBreakeven, collateralFromPayoff } from './sharedPayoff.js';
 import {
   checkEarningsRisk,
-  finalizeUniversalSignal,
+  finalizeScoredSignal,
   modelNotes,
   pushAccountRiskIssues,
   pushCompletenessIssue,
-  pushEarningsIssue,
+  pushDataConfidenceIssues,
+  pushDteFitIssue,
+  pushEarningsScoreIssue,
   pushUndefinedRiskIssue,
 } from './sharedContext.js';
 
@@ -102,25 +104,34 @@ export function analyzeDebitSpread(data, legs, expDateObj, dte, debit, prefs) {
     pushUndefinedRiskIssue(issues, strategy, { message: 'Undefined risk detected in a defined-risk debit spread' });
   }
   pushAccountRiskIssues(issues, strategy, maxLoss, prefs);
-  pushEarningsIssue(issues, strategy, earningsCheck, {
-    riskLevel: 'yellow',
-    riskMessage: `Earnings ${earningsCheck.date} falls before expiration -- binary move`,
-  });
+  pushEarningsScoreIssue(issues, strategy, earningsCheck, dte);
+  const breakevenMoveRatio = em ? moveToBreakeven / em : null;
+  if (breakevenMoveRatio != null && breakevenMoveRatio > 1) {
+    issues.push({ id:'debit_spread_breakeven_move_major', level:'red', category:'risk', scope:'strategy', strategy, metric:'breakevenMoveToExpectedMove', value:parseFloat(breakevenMoveRatio.toFixed(2)), redAt:1, scoreImpact:-30, message:'Breakeven move is larger than expected move; placeholder cushion threshold for owner review' });
+  } else if (breakevenMoveRatio != null && breakevenMoveRatio > 0.5) {
+    issues.push({ id:'debit_spread_breakeven_move_minor', level:'yellow', category:'risk', scope:'strategy', strategy, metric:'breakevenMoveToExpectedMove', value:parseFloat(breakevenMoveRatio.toFixed(2)), warnAt:0.5, scoreImpact:-15, message:'Breakeven move is more than half the expected move; placeholder cushion threshold for owner review' });
+  }
+  pushDteFitIssue(issues, strategy, dte, { min:30, max:60, label:'debit-spread' });
   if (movePct > 10) {
-    issues.push({ id:'debit_spread_large_breakeven_move', level:'yellow', category:'probability', scope:'strategy', strategy, metric:'movePct', value:movePct, warnAt:10, message:`Needs ${movePct}% move to breakeven -- aggressive target` });
+    issues.push({ id:'debit_spread_large_breakeven_move', level:'info', category:'context', scope:'context', strategy, metric:'movePct', value:movePct, warnAt:10, scoreImpact:0, affectsSignal:false, message:`Needs ${movePct}% move to breakeven -- aggressive target` });
   }
   if (riskReward && riskReward > 2) {
-    issues.push({ id:'debit_spread_risk_reward_high', level:'yellow', category:'compensation', scope:'strategy', strategy, metric:'riskReward', value:riskReward, warnAt:2, message:`Risk/reward ${riskReward}:1 -- risking more than potential gain` });
+    issues.push({ id:'debit_spread_risk_reward_high', level:'yellow', category:'compensation', scope:'strategy', strategy, metric:'riskReward', value:riskReward, warnAt:2, scoreImpact:riskReward > 3 ? -25 : -15, message:`Risk/reward ${riskReward}:1 -- risking more than potential gain; placeholder efficiency threshold for owner review` });
   }
-  if (probMaxLoss && probMaxLoss > 0.60) {
-    issues.push({ id:'debit_spread_prob_max_loss_high', level:'yellow', category:'probability', scope:'strategy', strategy, metric:'probMaxLoss', value:probMaxLoss, warnAt:0.60, message:`${pct(probMaxLoss)}% chance of max loss -- low probability trade` });
+  if (probAnyProfit != null && probAnyProfit < 0.40) {
+    issues.push({ id:'debit_spread_profit_probability_low', level:'red', category:'probability', scope:'strategy', strategy, metric:'probAnyProfit', value:probAnyProfit, redAt:0.40, scoreImpact:-20, message:`${pct(probAnyProfit)}% probability of any profit; placeholder probability threshold for owner review` });
+  } else if (probAnyProfit != null && probAnyProfit < 0.55) {
+    issues.push({ id:'debit_spread_profit_probability_moderate', level:'yellow', category:'probability', scope:'strategy', strategy, metric:'probAnyProfit', value:probAnyProfit, warnAt:0.55, scoreImpact:-10, message:`${pct(probAnyProfit)}% probability of any profit; placeholder probability threshold for owner review` });
   }
-  const decision = finalizeUniversalSignal(issues, { cautionOnAnyMeaningfulIssue: true });
+  pushDataConfidenceIssues(issues, strategy, data, { greeks, ivAvailable: greeks?.iv != null });
+  const decision = finalizeScoredSignal(issues);
 
   return {
     strategyGroup: strategy,
     signal: decision.signal,
     issues: decision.issues,
+    score: decision.score,
+    scoreBand: decision.scoreBand,
 
     price, longStrike, shortStrike, spreadWidth,
     breakeven, moveToBreakeven, movePct,

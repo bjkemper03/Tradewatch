@@ -7,11 +7,12 @@ import { buildPositionGreeks } from './sharedGreeks.js';
 import { payoffSummary, firstBreakeven, riskFieldsFromPayoff } from './sharedPayoff.js';
 import {
   checkEarningsRisk,
-  finalizeUniversalSignal,
+  finalizeScoredSignal,
   modelNotes,
   pushAccountRiskIssues,
   pushCompletenessIssue,
-  pushEarningsIssue,
+  pushDataConfidenceIssues,
+  pushEarningsScoreIssue,
   pushUndefinedRiskIssue,
 } from './sharedContext.js';
 
@@ -34,20 +35,19 @@ export function analyzeCustomPayoff(data, legs, expDateObj, dte, credit, prefs, 
     });
   }
   pushAccountRiskIssues(issues, strategy, payoff.maxLoss, prefs);
-  pushEarningsIssue(issues, strategy, earningsCheck, {
-    riskLevel: 'red',
-    riskBlocking: true,
-    riskMessage: `Earnings ${earningsCheck.date} falls before expiration`,
-  });
+  pushEarningsScoreIssue(issues, strategy, earningsCheck, dte);
   if (!payoff.breakevens.length) {
-    issues.push({ id:'custom_no_breakeven', level:'yellow', category:'model', scope:'strategy', strategy, metric:'breakevens', value:0, message:'No breakeven found in modeled expiration range' });
+    issues.push({ id:'custom_no_breakeven', level:'info', category:'model', scope:'context', strategy, metric:'breakevens', value:0, scoreImpact:0, affectsSignal:false, message:'No breakeven found in modeled expiration range' });
   }
-  const decision = finalizeUniversalSignal(issues, { cautionOnAnyMeaningfulIssue: true });
+  pushDataConfidenceIssues(issues, strategy, data, { greeks: positionGreeks, ivAvailable: false });
+  const decision = finalizeScoredSignal(issues);
 
   return {
     strategyGroup: 'custom',
     signal: decision.signal,
     issues: decision.issues,
+    score: decision.score,
+    scoreBand: decision.scoreBand,
     price,
     entryType: isCredit ? 'credit' : 'debit',
     entryPremium: entry,

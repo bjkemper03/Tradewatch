@@ -7,7 +7,7 @@ import { calcExpectedMove, calcPOW, calcCreditSpreadProbs } from '../probability
 import { safeNum, pct } from './sharedMath.js';
 import { bsDelta, buildKeyLegGreeks, buildPositionGreeks, getBestVol, getLegGreek } from './sharedGreeks.js';
 import { payoffSummary, firstBreakeven } from './sharedPayoff.js';
-import { checkEarningsRisk, finalizeUniversalSignal, modelNotes } from './sharedContext.js';
+import { checkEarningsRisk, finalizeScoredSignal, modelNotes, pushDataConfidenceIssues } from './sharedContext.js';
 
 export function analyzeCreditSpread(data, legs, expDateObj, dte, credit, prefs) {
   const { price, hv30, supports, resistances, earnings, chain } = data;
@@ -107,8 +107,8 @@ export function analyzeCreditSpread(data, legs, expDateObj, dte, credit, prefs) 
   // Issues
   const issues = [];
   const cushMin = prefs?.cushionMin || 5;
-  const dteMin  = prefs?.dteLow || 14;
-  const dteMax  = prefs?.dteHigh || 21;
+  const dteMin  = 21;
+  const dteMax  = 45;
   const crwMin  = prefs?.creditWidthMin || 8;
   const deltaMax = prefs?.deltaHigh || 0.30;
   const accountSize = safeNum(prefs?.accountSize || prefs?.startingAccountSize, null);
@@ -124,44 +124,46 @@ export function analyzeCreditSpread(data, legs, expDateObj, dte, credit, prefs) 
     : true;
 
   if (absDelta == null) {
-    issues.push({ id:'pcs_delta_unavailable', level:'red', category:'completeness', scope:'universal', strategy:'credit_spread', metric:'absDelta', blocking:true, message:'Delta unavailable from market data or estimate, so PCS scoring is incomplete' });
+    issues.push({ id:'pcs_delta_unavailable', level:'red', category:'completeness', scope:'universal', strategy:'credit_spread', metric:'absDelta', blocking:true, scoreImpact:0, message:'Delta unavailable from market data or estimate, so PCS scoring is incomplete' });
   }
   if (maxLoss == null || !Number.isFinite(maxLoss) || maxProfit == null || !Number.isFinite(maxProfit)) {
-    issues.push({ id:'pcs_risk_unavailable', level:'red', category:'completeness', scope:'universal', strategy:'credit_spread', blocking:true, message:'Risk/reward could not be calculated reliably, so PCS scoring is incomplete' });
+    issues.push({ id:'pcs_risk_unavailable', level:'red', category:'completeness', scope:'universal', strategy:'credit_spread', blocking:true, scoreImpact:0, message:'Risk/reward could not be calculated reliably, so PCS scoring is incomplete' });
   }
   if (payoff.maxLossUnlimited) {
-    issues.push({ id:'pcs_undefined_risk', level:'red', category:'risk', scope:'strategy', strategy:'credit_spread', blocking:true, message:'Undefined risk detected in a defined-risk spread' });
+    issues.push({ id:'pcs_undefined_risk', level:'red', category:'risk', scope:'strategy', strategy:'credit_spread', metric:'maxLossUnlimited', value:true, scoreImpact:-55, message:'Undefined risk detected in a defined-risk spread' });
   }
   if (maxLossPctAccount != null && maxLossPctAccount > 100) {
-    issues.push({ id:'account_risk_over_100', level:'red', category:'account', scope:'universal', metric:'maxLossPctAccount', value:maxLossPctAccount, redAt:100, blocking:true, message:`Max loss is ${maxLossPctAccount}% of account size` });
+    issues.push({ id:'account_risk_over_100', level:'red', category:'account', scope:'universal', metric:'maxLossPctAccount', value:maxLossPctAccount, redAt:100, scoreImpact:-55, message:`Max loss is ${maxLossPctAccount}% of account size` });
   } else if (maxLossPctAccount != null && maxLossPctAccount > 50) {
-    issues.push({ id:'account_risk_over_50', level:'yellow', category:'account', scope:'universal', metric:'maxLossPctAccount', value:maxLossPctAccount, warnAt:50, scoreImpact:1, message:`Max loss is ${maxLossPctAccount}% of account size` });
+    issues.push({ id:'account_risk_over_50', level:'yellow', category:'account', scope:'universal', metric:'maxLossPctAccount', value:maxLossPctAccount, warnAt:50, scoreImpact:-35, message:`Max loss is ${maxLossPctAccount}% of account size` });
   }
   if (earningsCheck.risk && earningsFirstHalf) {
-    issues.push({ id:'earnings_first_half', level:'red', category:'earnings', scope:'universal', strategy:'credit_spread', blocking:true, message:`Earnings ${earningsCheck.date} falls in the first half of this trade` });
+    issues.push({ id:'earnings_first_half', level:'red', category:'earnings', scope:'universal', strategy:'credit_spread', metric:'dte', value:dte, scoreImpact:dte < 30 ? -45 : -25, message:`Earnings ${earningsCheck.date} falls in the first half of this trade` });
   } else if (earningsCheck.risk) {
-    issues.push({ id:'earnings_second_half', level:'yellow', category:'earnings', scope:'universal', strategy:'credit_spread', scoreImpact:1, message:`Earnings ${earningsCheck.date} falls before expiration` });
+    issues.push({ id:'earnings_second_half', level:'yellow', category:'earnings', scope:'universal', strategy:'credit_spread', metric:'dte', value:dte, scoreImpact:dte < 90 ? -20 : 0, message:`Earnings ${earningsCheck.date} falls before expiration` });
+  } else if (earningsCheck.unknown) {
+    issues.push({ id:'earnings_unknown', level:'info', category:'earnings', scope:'context', strategy:'credit_spread', affectsSignal:false, scoreImpact:0, message:'Earnings date unavailable; confirm event risk before entry' });
   }
   if (cushionPct < 0) {
-    issues.push({ id:'pcs_price_beyond_short_strike', level:'red', category:'risk', scope:'strategy', strategy:'credit_spread', metric:'cushionPct', value:cushionPct, blocking:true, message:`Price is already beyond the short strike risk line (${cushionPct}% cushion)` });
+    issues.push({ id:'pcs_price_beyond_short_strike', level:'red', category:'risk', scope:'strategy', strategy:'credit_spread', metric:'cushionPct', value:cushionPct, redAt:0, scoreImpact:-30, message:`Price is already beyond the short strike risk line (${cushionPct}% cushion)` });
   } else if (cushionPct < cushMin) {
-    issues.push({ id:'pcs_cushion_below_preference', level:'yellow', category:'preference', scope:'preference', strategy:'credit_spread', metric:'cushionPct', value:cushionPct, warnAt:cushMin, scoreImpact:1, message:`${cushionPct}% cushion is below your ${cushMin}% preference` });
+    issues.push({ id:'pcs_cushion_below_preference', level:'yellow', category:'risk', scope:'strategy', strategy:'credit_spread', metric:'cushionPct', value:cushionPct, warnAt:cushMin, scoreImpact:-15, message:`${cushionPct}% cushion is below your ${cushMin}% preference; expected-move cushion thresholds are placeholders for owner review` });
   }
   if (crWidthPct < 10) {
-    issues.push({ id:'pcs_credit_width_red', level:'red', category:'compensation', scope:'strategy', strategy:'credit_spread', metric:'creditWidthPct', value:crWidthPct, redAt:10, blocking:true, message:`Credit is only ${crWidthPct}% of spread width -- below the 10% minimum for PCS compensation` });
+    issues.push({ id:'pcs_credit_width_red', level:'red', category:'compensation', scope:'strategy', strategy:'credit_spread', metric:'creditWidthPct', value:crWidthPct, redAt:10, scoreImpact:-25, message:`Credit is only ${crWidthPct}% of spread width -- below the placeholder minimum for PCS compensation` });
   } else if (crWidthPct < 20) {
-    issues.push({ id:'pcs_credit_width_yellow', level:'yellow', category:'compensation', scope:'strategy', strategy:'credit_spread', metric:'creditWidthPct', value:crWidthPct, warnAt:20, scoreImpact:1, message:`Credit is ${crWidthPct}% of spread width, below the 20% PCS target` });
+    issues.push({ id:'pcs_credit_width_yellow', level:'yellow', category:'compensation', scope:'strategy', strategy:'credit_spread', metric:'creditWidthPct', value:crWidthPct, warnAt:20, scoreImpact:-15, message:`Credit is ${crWidthPct}% of spread width, below the placeholder PCS target` });
   }
   if (absDelta && absDelta > deltaRed) {
-    issues.push({ id:'pcs_delta_red', level:'red', category:'probability', scope:'strategy', strategy:'credit_spread', metric:'absDelta', value:absDelta, redAt:deltaRed, blocking:false, message:`Delta ${absDelta.toFixed(3)} is more than 10% above your ${deltaMax} target` });
+    issues.push({ id:'pcs_delta_red', level:'red', category:'probability', scope:'strategy', strategy:'credit_spread', metric:'absDelta', value:absDelta, redAt:deltaRed, scoreImpact:-20, message:`Delta ${absDelta.toFixed(3)} is more than 10% above your ${deltaMax} placeholder target` });
   } else if (absDelta && absDelta > deltaMax) {
-    issues.push({ id:'pcs_delta_yellow', level:'yellow', category:'probability', scope:'strategy', strategy:'credit_spread', metric:'absDelta', value:absDelta, warnAt:deltaMax, scoreImpact:1, message:`Delta ${absDelta.toFixed(3)} is above your ${deltaMax} target` });
+    issues.push({ id:'pcs_delta_yellow', level:'yellow', category:'probability', scope:'strategy', strategy:'credit_spread', metric:'absDelta', value:absDelta, warnAt:deltaMax, scoreImpact:-10, message:`Delta ${absDelta.toFixed(3)} is above your ${deltaMax} placeholder target` });
   }
   if (dte < dteMin) {
-    issues.push({ id:'dte_below_preference', level:'info', category:'context', scope:'preference', metric:'dte', value:dte, warnAt:dteMin, affectsSignal:false, message:`${dte} DTE is below your ${dteMin} preferred minimum` });
+    issues.push({ id:'dte_below_preference', level:'yellow', category:'preference', scope:'preference', strategy:'credit_spread', metric:'dte', value:dte, warnAt:dteMin, scoreImpact:-10, message:`${dte} DTE is below the placeholder credit-spread fit range` });
   }
   if (dte > dteMax) {
-    issues.push({ id:'dte_above_preference', level:'info', category:'context', scope:'preference', metric:'dte', value:dte, warnAt:dteMax, affectsSignal:false, message:`${dte} DTE is above your ${dteMax} preferred maximum` });
+    issues.push({ id:'dte_above_preference', level:'yellow', category:'preference', scope:'preference', strategy:'credit_spread', metric:'dte', value:dte, warnAt:dteMax, scoreImpact:-5, message:`${dte} DTE is above the placeholder credit-spread fit range` });
   }
   if (isPut && nearestSupport && shortStrike > nearestSupport) {
     issues.push({ id:'pcs_short_above_support', level:'info', category:'context', scope:'context', strategy:'credit_spread', affectsSignal:false, message:`Context: short put $${shortStrike} sits above nearest support $${nearestSupport}` });
@@ -169,12 +171,15 @@ export function analyzeCreditSpread(data, legs, expDateObj, dte, credit, prefs) 
   if (!strikeOutsideEM && em) {
     issues.push({ id:'pcs_short_inside_expected_move', level:'info', category:'context', scope:'context', strategy:'credit_spread', metric:'expectedMove', value:em, affectsSignal:false, message:`Short strike is inside the 1SD expected move ($${em})` });
   }
-  const decision = finalizeUniversalSignal(issues);
+  pushDataConfidenceIssues(issues, 'credit_spread', data, { greeks, ivAvailable: greeks?.iv != null });
+  const decision = finalizeScoredSignal(issues);
 
   return {
     strategyGroup: 'credit_spread',
     signal: decision.signal,
     issues: decision.issues,
+    score: decision.score,
+    scoreBand: decision.scoreBand,
 
     // Core
     price, shortStrike, longStrike, spreadWidth,

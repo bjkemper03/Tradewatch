@@ -10,11 +10,13 @@ import { payoffSummary, collateralFromPayoff } from './sharedPayoff.js';
 import { groupedByStrike, sameOptionType } from './sharedStructure.js';
 import {
   checkEarningsRisk,
-  finalizeUniversalSignal,
+  finalizeScoredSignal,
   modelNotes,
   pushAccountRiskIssues,
   pushCompletenessIssue,
-  pushEarningsIssue,
+  pushDataConfidenceIssues,
+  pushDteFitIssue,
+  pushEarningsScoreIssue,
   pushUndefinedRiskIssue,
 } from './sharedContext.js';
 
@@ -136,18 +138,21 @@ export function analyzeButterflyBWB(data, legs, expDateObj, dte, credit, prefs, 
     });
   }
   pushAccountRiskIssues(issues, strategy, maxLoss, prefs);
-  pushEarningsIssue(issues, strategy, earningsCheck, {
-    riskLevel: 'red',
-    riskBlocking: true,
-    riskMessage: `Earnings ${earningsCheck.date} falls before expiration`,
-  });
+  pushEarningsScoreIssue(issues, strategy, earningsCheck, dte);
+  pushDteFitIssue(issues, strategy, dte, { min:21, max:60, label:'butterfly/BWB/ratio' });
   if (nowPayoff != null && nowPayoff < 0) {
-    issues.push({ id:'butterfly_outside_profit_zone', level:'yellow', category:'risk', scope:'strategy', strategy, message:'Price is currently outside the expiration profit zone' });
+    issues.push({ id:'butterfly_outside_profit_zone', level:'yellow', category:'risk', scope:'strategy', strategy, metric:'nowPayoff', value:nowPayoff, scoreImpact:-15, message:'Price is currently outside the expiration profit zone; placeholder cushion threshold for owner review' });
   }
   if (crRatio && crRatio < 12) {
-    issues.push({ id:'butterfly_low_credit_risk_ratio', level:'yellow', category:'compensation', scope:'strategy', strategy, metric:'crRatio', value:crRatio, warnAt:12, message:`Low credit/risk ratio: ${crRatio}%` });
+    issues.push({ id:'butterfly_low_credit_risk_ratio', level:'yellow', category:'compensation', scope:'strategy', strategy, metric:'crRatio', value:crRatio, warnAt:12, scoreImpact:crRatio < 8 ? -25 : -15, message:`Low credit/risk ratio: ${crRatio}%; placeholder efficiency threshold for owner review` });
   }
-  const decision = finalizeUniversalSignal(issues, { cautionOnAnyMeaningfulIssue: true });
+  if (probs?.probAnyProfit != null && probs.probAnyProfit < 0.35) {
+    issues.push({ id:'butterfly_probability_low', level:'red', category:'probability', scope:'strategy', strategy, metric:'probAnyProfit', value:probs.probAnyProfit, redAt:0.35, scoreImpact:-20, message:`${pct(probs.probAnyProfit)}% probability of any profit; placeholder probability threshold for owner review` });
+  } else if (probs?.probAnyProfit != null && probs.probAnyProfit < 0.50) {
+    issues.push({ id:'butterfly_probability_moderate', level:'yellow', category:'probability', scope:'strategy', strategy, metric:'probAnyProfit', value:probs.probAnyProfit, warnAt:0.50, scoreImpact:-10, message:`${pct(probs.probAnyProfit)}% probability of any profit; placeholder probability threshold for owner review` });
+  }
+  pushDataConfidenceIssues(issues, strategy, data, { greeks: netGreeks || greeks, ivAvailable: greeks?.iv != null });
+  const decision = finalizeScoredSignal(issues);
 
   return {
     strategyGroup: strategy,
@@ -155,6 +160,8 @@ export function analyzeButterflyBWB(data, legs, expDateObj, dte, credit, prefs, 
     isCredit, isBWB, isSymmetric, isRatio,
     signal: decision.signal,
     issues: decision.issues,
+    score: decision.score,
+    scoreBand: decision.scoreBand,
 
     price, centerStrike, lowerStrike, upperStrike,
     lowerWing, upperWing, wingRatio, wingRatioLabel,

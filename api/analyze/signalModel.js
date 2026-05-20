@@ -33,8 +33,8 @@ function normalizeLevel(level) {
 }
 
 function defaultScoreImpact(level) {
-  if (level === 'yellow') return 1;
-  if (level === 'red') return 3;
+  if (level === 'yellow') return -10;
+  if (level === 'red') return -25;
   return 0;
 }
 
@@ -107,6 +107,30 @@ export function decideSignal(issues = [], options = {}) {
     return { signal: 'CAUTION', issues: normalized };
   }
   return { signal: 'GO', issues: normalized };
+}
+
+export function scoreBand(score, issues = []) {
+  if (score == null) return null;
+  const flaggedMetrics = issues
+    .filter(issue => issue.scoreImpact < 0)
+    .map(issue => issue.metric || issue.category || issue.id)
+    .filter(Boolean);
+  if (score >= 70 && score <= 74) return { zone: 'approaching_go', label: 'CAUTION, approaching GO', flaggedMetrics };
+  if (score >= 75 && score <= 80) return { zone: 'approaching_caution', label: 'GO, approaching CAUTION', flaggedMetrics };
+  if (score >= 50 && score <= 54) return { zone: 'approaching_no_go', label: 'CAUTION, approaching NO-GO', flaggedMetrics };
+  if (score >= 55 && score <= 59) return { zone: 'weakening', label: 'CAUTION, weakening', flaggedMetrics };
+  return { zone: 'normal', label: '', flaggedMetrics };
+}
+
+export function decideScoredSignal(issues = []) {
+  const normalized = sortIssues(issues.map(createIssue));
+  if (normalized.some(issue => issue.level === 'red' && issue.category === 'completeness')) {
+    return { signal: 'INCOMPLETE', score: null, scoreBand: null, issues: normalized };
+  }
+
+  const score = normalized.reduce((sum, issue) => sum + (Number.isFinite(issue.scoreImpact) ? issue.scoreImpact : 0), 100);
+  const signal = score >= 75 ? 'GO' : score >= 50 ? 'CAUTION' : 'NO-GO';
+  return { signal, score, scoreBand: scoreBand(score, normalized), issues: normalized };
 }
 
 export function legacyIssue(issue) {

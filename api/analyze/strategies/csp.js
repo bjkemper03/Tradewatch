@@ -9,11 +9,14 @@ import { bsDelta, buildKeyLegGreeks, buildPositionGreeks, completeGreeks, getBes
 import { payoffSummary, firstBreakeven } from './sharedPayoff.js';
 import {
   checkEarningsRisk,
-  finalizeUniversalSignal,
+  finalizeScoredSignal,
   modelNotes,
   pushAccountRiskIssues,
   pushCompletenessIssue,
-  pushEarningsIssue,
+  pushCushionIssue,
+  pushDataConfidenceIssues,
+  pushDteFitIssue,
+  pushEarningsScoreIssue,
   pushUndefinedRiskIssue,
 } from './sharedContext.js';
 
@@ -96,21 +99,31 @@ export function analyzeCSP(data, legs, expDateObj, dte, credit, prefs) {
     pushUndefinedRiskIssue(issues, strategy, { message: 'Undefined risk detected in a cash-secured put model' });
   }
   pushAccountRiskIssues(issues, strategy, maxLoss, prefs);
-  pushEarningsIssue(issues, strategy, earningsCheck, {
-    riskLevel: 'red',
-    riskBlocking: true,
-    riskMessage: `Earnings ${earningsCheck.date} falls before expiration -- binary risk`,
+  pushEarningsScoreIssue(issues, strategy, earningsCheck, dte);
+  pushCushionIssue(issues, strategy, {
+    distance: price - breakeven,
+    expectedMove: em,
+    metric: 'beCushionToExpectedMove',
+    messagePrefix: 'CSP breakeven cushion',
   });
+  const premiumCollateralPct = collateral > 0 ? parseFloat((cr * 100 / collateral * 100).toFixed(2)) : null;
+  if (premiumCollateralPct != null && premiumCollateralPct < 1) {
+    issues.push({ id:'csp_efficiency_low', level:'red', category:'compensation', scope:'strategy', strategy, metric:'premiumCollateralPct', value:premiumCollateralPct, redAt:1, scoreImpact:-25, message:`Premium is ${premiumCollateralPct}% of collateral; placeholder efficiency threshold for owner review` });
+  } else if (premiumCollateralPct != null && premiumCollateralPct < 2) {
+    issues.push({ id:'csp_efficiency_moderate', level:'yellow', category:'compensation', scope:'strategy', strategy, metric:'premiumCollateralPct', value:premiumCollateralPct, warnAt:2, scoreImpact:-15, message:`Premium is ${premiumCollateralPct}% of collateral; placeholder efficiency threshold for owner review` });
+  }
+  pushDteFitIssue(issues, strategy, dte, { min:21, max:45, label:'CSP' });
   if (cushionPct < 0) {
-    issues.push({ id:'csp_itm_put', level:'red', category:'risk', scope:'strategy', strategy, metric:'cushionPct', value:cushionPct, blocking:true, message:`Strike $${strike} above current price $${price} -- ITM put` });
+    issues.push({ id:'csp_itm_put', level:'red', category:'risk', scope:'strategy', strategy, metric:'cushionPct', value:cushionPct, scoreImpact:0, message:`Strike $${strike} above current price $${price} -- ITM put` });
   }
   if (strikeBelowSupport) {
     issues.push({ id:'csp_strike_below_support', level:'info', category:'context', scope:'context', strategy, affectsSignal:false, message:`Context: strike $${strike} is below nearest support $${supports[0]} -- assignment may buy into weakness` });
   }
   if (absDelta && absDelta > deltaMax) {
-    issues.push({ id:'csp_delta_high', level:'yellow', category:'probability', scope:'strategy', strategy, metric:'absDelta', value:absDelta, warnAt:deltaMax, message:`Delta ${absDelta.toFixed(3)} -- high assignment probability` });
+    issues.push({ id:'csp_delta_high', level:'yellow', category:'probability', scope:'strategy', strategy, metric:'absDelta', value:absDelta, warnAt:deltaMax, scoreImpact:-20, message:`Delta ${absDelta.toFixed(3)} -- high assignment probability; placeholder probability threshold for owner review` });
   }
-  const decision = finalizeUniversalSignal(issues, { cautionOnAnyMeaningfulIssue: true });
+  pushDataConfidenceIssues(issues, strategy, data, { greeks: rawGreeks, ivAvailable: rawGreeks?.iv != null });
+  const decision = finalizeScoredSignal(issues);
 
   // CSP-specific: flag if yield is very low but don't penalize -- show context instead
   const yieldData = wheelData?.ifNotAssigned?.yieldData;
@@ -119,6 +132,8 @@ export function analyzeCSP(data, legs, expDateObj, dte, credit, prefs) {
     strategyGroup: 'csp',
     signal: decision.signal,
     issues: decision.issues,
+    score: decision.score,
+    scoreBand: decision.scoreBand,
 
     price, strike, breakeven,
     cushionPct, beCushionPct,
