@@ -26,15 +26,21 @@ export function analyzeButterflyBWB(data, legs, expDateObj, dte, credit, prefs, 
 
   // Sort legs by strike to identify structure
   const allLegs = legs.map(l => ({ ...l, strike: safeNum(l.s) })).filter(l => l.strike > 0);
-  if (allLegs.length < 3) return { error: 'Butterfly/BWB requires at least 3 legs' };
-
-  const optType = allLegs[0].t.toLowerCase();
   if (!sameOptionType(allLegs)) return { error: 'Butterfly/BWB/ratio legs must use the same option type' };
+  const optType = allLegs[0].t.toLowerCase();
 
   // Identify structure
   const sells = allLegs.filter(l => l.a === 'SELL');
   const buys  = allLegs.filter(l => l.a === 'BUY');
+  const twoLegRatio = allLegs.length === 2 &&
+    sells.length === 1 &&
+    buys.length === 1 &&
+    Math.max(safeNum(sells[0].n || sells[0].qty || 1, 1), safeNum(buys[0].n || buys[0].qty || 1, 1)) >
+      Math.min(safeNum(sells[0].n || sells[0].qty || 1, 1), safeNum(buys[0].n || buys[0].qty || 1, 1));
 
+  if (allLegs.length < 3 && !twoLegRatio) {
+    return { error: 'Ratio spread requires one long leg and one larger short leg; butterfly/BWB requires at least 3 legs' };
+  }
   if (sells.length === 0 || buys.length === 0) return { error: 'Need both buy and sell legs' };
 
   const groups = groupedByStrike(allLegs);
@@ -53,7 +59,7 @@ export function analyzeButterflyBWB(data, legs, expDateObj, dte, credit, prefs, 
   const lowerWing = hasLongBelow ? centerStrike - lowerStrike : null;
   const upperWing = hasLongAbove && upperStrike ? upperStrike - centerStrike : null;
   const isSymmetric = lowerWing && upperWing && Math.abs(lowerWing - upperWing) < 0.26;
-  const isRatio     = !hasLongBelow || !hasLongAbove;
+  const isRatio     = twoLegRatio || !hasLongBelow || !hasLongAbove;
   const isBWB       = !isRatio && !isSymmetric;
 
   // Get vol
@@ -73,11 +79,19 @@ export function analyzeButterflyBWB(data, legs, expDateObj, dte, credit, prefs, 
   };
 
   // Expiration payoff from exact leg geometry.
-  const payoff = payoffSummary(legs, isCredit ? cr : -cr, price, [
-    { label: 'Lower wing', px: lowerStrike, note: 'Outer long strike', kind: 'wing' },
-    { label: 'Center', px: centerStrike, note: 'Tent peak / short strike area', kind: 'short' },
-    ...(upperStrike ? [{ label: 'Upper wing', px: upperStrike, note: 'Outer long strike', kind: 'wing' }] : []),
-  ]);
+  const payoffLabels = isRatio
+    ? groups.map(g => ({
+        label: g.netQty < 0 ? 'Short ratio strike' : 'Long hedge strike',
+        px: g.strike,
+        note: g.netQty < 0 ? 'Net short side of the ratio' : 'Net long hedge side',
+        kind: g.netQty < 0 ? 'short' : 'long',
+      }))
+    : [
+        { label: 'Lower wing', px: lowerStrike, note: 'Outer long strike', kind: 'wing' },
+        { label: 'Center', px: centerStrike, note: 'Tent peak / short strike area', kind: 'short' },
+        ...(upperStrike ? [{ label: 'Upper wing', px: upperStrike, note: 'Outer long strike', kind: 'wing' }] : []),
+      ];
+  const payoff = payoffSummary(legs, isCredit ? cr : -cr, price, payoffLabels);
   const maxProfit = payoff.maxProfit;
   const maxLoss = payoff.maxLoss;
   const lowerBE = payoff.breakevens[0] || null;
