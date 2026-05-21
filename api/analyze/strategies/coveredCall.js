@@ -93,12 +93,14 @@ export function analyzeCoveredCall(data, legs, expDateObj, dte, credit, prefs) {
   // account exposure are tracked across the portfolio, account-risk scoring here
   // would overstate the risk of the call sale itself.
   pushEarningsScoreIssue(issues, strategy, earningsCheck, dte);
-  pushCushionIssue(issues, strategy, {
-    distance: strike - price,
-    expectedMove: em,
-    metric: 'callStrikeCushionToExpectedMove',
-    messagePrefix: 'Covered-call assignment cushion',
-  });
+  if (!(wantsAssignment && strike < price)) {
+    pushCushionIssue(issues, strategy, {
+      distance: strike - price,
+      expectedMove: em,
+      metric: 'callStrikeCushionToExpectedMove',
+      messagePrefix: 'Covered-call assignment cushion',
+    });
+  }
   const premiumSharePct = price > 0 ? parseFloat((cr / price * 100).toFixed(2)) : null;
   if (premiumSharePct != null && premiumSharePct < 0.5) {
     issues.push({ id:'covered_call_efficiency_low', level:'red', category:'compensation', scope:'strategy', strategy, metric:'premiumSharePct', value:premiumSharePct, redAt:0.5, scoreImpact:-25, message:`Premium is ${premiumSharePct}% of share value; placeholder efficiency threshold for owner review` });

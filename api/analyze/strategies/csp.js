@@ -115,8 +115,10 @@ export function analyzeCSP(data, legs, expDateObj, dte, credit, prefs) {
     issues.push({ id:'csp_efficiency_moderate', level:'yellow', category:'compensation', scope:'strategy', strategy, metric:'premiumCollateralPct', value:premiumCollateralPct, warnAt:2, scoreImpact:-15, message:`Premium is ${premiumCollateralPct}% of collateral; placeholder efficiency threshold for owner review` });
   }
   pushDteFitIssue(issues, strategy, dte, { min:21, max:45, label:'CSP' });
-  if (cushionPct < 0) {
-    issues.push({ id:'csp_itm_put', level:'red', category:'risk', scope:'strategy', strategy, metric:'cushionPct', value:cushionPct, redAt:0, scoreImpact:-30, message:`Strike $${strike} above current price $${price} -- ITM put` });
+  if (cushionPct < 0 && wantsAssignment) {
+    issues.push({ id:'csp_itm_assignment_intent', level:'info', category:'context', scope:'context', strategy, metric:'cushionPct', value:cushionPct, affectsSignal:false, scoreImpact:0, message:`Strike $${strike} is above current price $${price} -- assignment is likely and consistent with assignment intent.` });
+  } else if (cushionPct < 0) {
+    issues.push({ id:'csp_itm_put', level:'red', category:'risk', scope:'strategy', strategy, metric:'cushionPct', value:cushionPct, redAt:0, scoreImpact:-55, message:`Strike $${strike} above current price $${price} -- ITM put and assignment is not marked as intended` });
   }
   if (strikeBelowSupport) {
     issues.push({ id:'csp_strike_below_support', level:'info', category:'context', scope:'context', strategy, affectsSignal:false, message:`Context: strike $${strike} is below nearest support $${supports[0]} -- assignment may buy into weakness` });

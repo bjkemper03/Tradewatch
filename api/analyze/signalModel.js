@@ -42,12 +42,13 @@ export function createIssue(issue) {
   const hasScoreImpact = Object.prototype.hasOwnProperty.call(issue, 'scoreImpact');
   const message = issue.message || issue.msg || '';
   const isPlaceholder = /placeholder/i.test(message);
-  const scoreImpact = isPlaceholder
-    ? 0
-    : hasScoreImpact ? issue.scoreImpact : defaultScoreImpact(issue, level);
-  const affectsSignal = isPlaceholder
-    ? false
-    : issue.affectsSignal ?? (level !== 'info');
+  const hasAffectsSignal = Object.prototype.hasOwnProperty.call(issue, 'affectsSignal');
+  const scoreImpact = hasScoreImpact
+    ? issue.scoreImpact
+    : isPlaceholder ? 0 : defaultScoreImpact(issue, level);
+  const affectsSignal = hasAffectsSignal
+    ? issue.affectsSignal
+    : hasScoreImpact ? (level !== 'info') : isPlaceholder ? false : (level !== 'info');
   return {
     id: issue.id || `${issue.category || 'model'}_${level}`,
     level,
@@ -120,7 +121,9 @@ export function decideSignal(issues = [], options = {}) {
 export function scoreBand(score, issues = []) {
   if (score == null) return null;
   const flaggedMetrics = issues
-    .filter(issue => issue.scoreImpact < 0)
+    .filter(issue => issue.scoreImpact < 0 && issue.affectsSignal !== false)
+    .sort((a, b) => a.scoreImpact - b.scoreImpact)
+    .slice(0, 3)
     .map(issue => issue.metric || issue.category || issue.id)
     .filter(Boolean);
   if (score >= 70 && score <= 74) return { zone: 'approaching_go', label: 'CAUTION, approaching GO', flaggedMetrics };
