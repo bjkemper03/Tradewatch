@@ -25,8 +25,8 @@ export function analyzeCoveredCall(data, legs, expDateObj, dte, credit, prefs) {
 
   const sellLeg = legs.find(l => l.a === 'SELL' && l.t === 'CALL');
   if (!sellLeg) return { error: 'Covered call requires a short CALL leg' };
-  const ownsShares = prefs?.ownsShares ?? prefs?.coveredCallOwnsShares ?? true;
-  const wantsAssignment = prefs?.wantsAssignment ?? prefs?.coveredCallWantsAssignment ?? false;
+  const ownsShares = prefs?.coveredCallOwnsShares ?? prefs?.ownsShares ?? false;
+  const wantsAssignment = prefs?.coveredCallWantsAssignment ?? prefs?.wantsAssignment ?? false;
 
   const strike = safeNum(sellLeg.s);
   if (!strike) return { error: 'Enter the call strike price' };
@@ -60,7 +60,7 @@ export function analyzeCoveredCall(data, legs, expDateObj, dte, credit, prefs) {
   const payoff        = payoffSummary(legs, cr, price, [
     { label: 'Call strike', px: strike, note: 'Called away above here', kind: 'short' },
     { label: 'Stock $0', px: 0, note: 'Theoretical downside endpoint', kind: 'loss' },
-  ], { underlyingShares: 100 * callQty, underlyingBasis: price });
+  ], { underlyingShares: ownsShares ? 100 * callQty : 0, underlyingBasis: price });
   const maxProfit     = payoff.maxProfit;
   const maxLoss       = payoff.maxLoss;
   const downsideProtection = cr; // premium reduces cost basis
@@ -84,7 +84,7 @@ export function analyzeCoveredCall(data, legs, expDateObj, dte, credit, prefs) {
     pushCompletenessIssue(issues, strategy, 'maxLoss', 'Covered-call payoff could not be calculated reliably');
   }
   if (!ownsShares) {
-    issues.push({ id:'covered_call_shares_not_confirmed', level:'red', category:'structure', scope:'strategy', strategy, metric:'ownsShares', value:false, scoreImpact:-55, message:'Covered call requires owned shares; otherwise the short call may be naked' });
+    issues.push({ id:'covered_call_shares_not_confirmed', level:'red', category:'structure', scope:'strategy', strategy, metric:'ownsShares', value:false, scoreImpact:-55, message:'Covered call requires owned shares; otherwise the short call is naked undefined risk' });
   }
   pushAccountRiskIssues(issues, strategy, maxLoss, prefs);
   pushEarningsScoreIssue(issues, strategy, earningsCheck, dte);
@@ -109,10 +109,16 @@ export function analyzeCoveredCall(data, legs, expDateObj, dte, credit, prefs) {
   if (upsideCapPct < 1 && !wantsAssignment) {
     issues.push({ id:'covered_call_low_upside_cap', level:'yellow', category:'compensation', scope:'strategy', strategy, metric:'upsideCapPct', value:upsideCapPct, warnAt:1, scoreImpact:-15, message:`Only ${upsideCapPct}% upside before shares called away; placeholder tradeoff threshold for owner review` });
   }
-  if (absDelta && absDelta > 0.70 && !wantsAssignment) {
-    issues.push({ id:'covered_call_delta_high', level:'yellow', category:'probability', scope:'strategy', strategy, metric:'absDelta', value:absDelta, warnAt:0.70, scoreImpact:-20, message:`Delta ${absDelta.toFixed(3)} -- high probability of assignment; placeholder probability threshold for owner review` });
+  if (absDelta && wantsAssignment) {
+    if (absDelta < 0.15) {
+      issues.push({ id:'covered_call_delta_assignment_unlikely', level:'red', category:'probability', scope:'strategy', strategy, metric:'absDelta', value:absDelta, redAt:0.15, scoreImpact:-20, message:`Delta ${absDelta.toFixed(3)} -- assignment is unlikely despite assignment intent; placeholder threshold for owner review` });
+    } else if (absDelta < 0.25) {
+      issues.push({ id:'covered_call_delta_assignment_low', level:'yellow', category:'probability', scope:'strategy', strategy, metric:'absDelta', value:absDelta, warnAt:0.25, scoreImpact:-10, message:`Delta ${absDelta.toFixed(3)} -- assignment odds are low for an assignment-focused covered call; placeholder threshold for owner review` });
+    } else {
+      issues.push({ id:'covered_call_delta_assignment_intent', level:'info', category:'probability', scope:'context', strategy, metric:'absDelta', value:absDelta, affectsSignal:false, scoreImpact:0, message:`Delta ${absDelta.toFixed(3)} -- assignment probability is consistent with assignment intent` });
+    }
   } else if (absDelta && absDelta > 0.70) {
-    issues.push({ id:'covered_call_delta_high_assignment_intent', level:'info', category:'probability', scope:'context', strategy, metric:'absDelta', value:absDelta, affectsSignal:false, message:`Delta ${absDelta.toFixed(3)} -- high assignment probability, consistent with assignment intent` });
+    issues.push({ id:'covered_call_delta_high', level:'yellow', category:'probability', scope:'strategy', strategy, metric:'absDelta', value:absDelta, warnAt:0.70, scoreImpact:-20, message:`Delta ${absDelta.toFixed(3)} -- high probability of assignment; placeholder probability threshold for owner review` });
   }
   pushDataConfidenceIssues(issues, strategy, data, { greeks, ivAvailable: greeks?.iv != null });
   const decision = finalizeScoredSignal(issues);
@@ -130,7 +136,9 @@ export function analyzeCoveredCall(data, legs, expDateObj, dte, credit, prefs) {
     upsideCap, upsideCapPct,
     downsideProtection,
     maxProfit,
-    collateral: 0,
+    collateral: ownsShares ? 0 : null,
+    maxProfitUnlimited: payoff.maxProfitUnlimited,
+    maxLossUnlimited: payoff.maxLossUnlimited,
     ownsShares,
     wantsAssignment,
     absDelta, deltaSource,

@@ -42,6 +42,7 @@ function renderAnalyzeForm() {
         '<option value="debit">Debit to open</option>' +
       '</select>' +
     '</div>' +
+    '<div id="az-strategy-context"></div>' +
     '<div class="fg2">' +
       '<div class="fld"><label>Collateral $ (estimate)</label>' +
         '<input id="az-col" placeholder="Auto" type="number" step="1" style="font-family:var(--mono)">' +
@@ -54,6 +55,7 @@ function renderAnalyzeForm() {
   '</div><div id="az-result" style="margin-top:4px"></div></div>';
 
   buildAzLegs();
+  renderAnalyzeStrategyContext();
   if ($('az-strat')) $('az-strat').value = azStrat;
   if (remembered) {
     if ($('az-tk')) $('az-tk').value = remembered.ticker || '';
@@ -61,6 +63,8 @@ function renderAnalyzeForm() {
     if ($('az-cr')) $('az-cr').value = remembered.entryPremium != null ? remembered.entryPremium : remembered.credit || '';
     if ($('az-entry')) $('az-entry').value = remembered.entryType || (isDebitStrat(azStrat) ? 'debit' : 'credit');
     if ($('az-ctx')) $('az-ctx').value = remembered.notes || '';
+    if ($('az-cc-own-shares')) $('az-cc-own-shares').checked = remembered.ownsShares === true;
+    if ($('az-cc-wants-assignment')) $('az-cc-wants-assignment').checked = remembered.wantsAssignment === true;
     azUpdateCol();
     renderAnalysisResult(remembered);
   }
@@ -73,9 +77,31 @@ function azChangeStrat(s) {
   azStrat   = s;
   azLegData = (DEF[s] || [{ a:'BUY', t:'PUT', n:1, s:'' }]).map(function(l) { return Object.assign({}, l); });
   buildAzLegs();
+  renderAnalyzeStrategyContext();
   var entry = $('az-entry');
   if (entry) entry.value = isDebitStrat(s) ? 'debit' : 'credit';
   azUpdateCol();
+}
+
+function renderAnalyzeStrategyContext() {
+  var el = $('az-strategy-context');
+  if (!el) return;
+  if (azStrat !== 'COVERED CALL') {
+    el.innerHTML = '';
+    return;
+  }
+  el.innerHTML =
+    '<div class="strategy-context-box">' +
+      '<div class="analysis-panel-label">Covered Call Context</div>' +
+      '<label class="strategy-context-check">' +
+        '<input id="az-cc-own-shares" type="checkbox">' +
+        '<span>I own the shares</span>' +
+      '</label>' +
+      '<label class="strategy-context-check">' +
+        '<input id="az-cc-wants-assignment" type="checkbox">' +
+        '<span>I want assignment</span>' +
+      '</label>' +
+    '</div>';
 }
 
 function addAzLeg() {

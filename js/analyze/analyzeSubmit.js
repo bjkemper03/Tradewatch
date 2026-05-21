@@ -7,6 +7,8 @@ async function runAnalysis() {
   var expRaw = $('az-exp') ? $('az-exp').value.trim() : '';
   var credit = safeNum($('az-cr') ? $('az-cr').value : 0);
   var entryType = $('az-entry') ? $('az-entry').value : (isDebitStrat(azStrat) ? 'debit' : 'credit');
+  var ccOwnsShares = $('az-cc-own-shares') ? $('az-cc-own-shares').checked : false;
+  var ccWantsAssignment = $('az-cc-wants-assignment') ? $('az-cc-wants-assignment').checked : false;
   if (!ticker) { alert('Enter a ticker symbol'); return; }
 
   var btn = $('az-btn');
@@ -31,7 +33,11 @@ async function runAnalysis() {
           dteHigh:       prefs.dteHigh,
           deltaLow:      prefs.deltaLow,
           deltaHigh:     prefs.deltaHigh,
-          creditWidthMin:prefs.creditWidthMin
+          creditWidthMin:prefs.creditWidthMin,
+          accountSize:   prefs.accountSize,
+          startingAccountSize:prefs.startingAccountSize,
+          coveredCallOwnsShares: azStrat === 'COVERED CALL' ? ccOwnsShares : undefined,
+          coveredCallWantsAssignment: azStrat === 'COVERED CALL' ? ccWantsAssignment : undefined
         }
       }),
       signal: AbortSignal.timeout(25000)
@@ -49,6 +55,10 @@ async function runAnalysis() {
     d.legs = azLegData.map(function(l) { return Object.assign({}, l); });
     d.entryPremium = credit;
     d.notes = $('az-ctx') ? $('az-ctx').value.trim() : '';
+    if (azStrat === 'COVERED CALL') {
+      d.ownsShares = ccOwnsShares;
+      d.wantsAssignment = ccWantsAssignment;
+    }
     lastAnalysisResult = JSON.parse(JSON.stringify(d));
 
     // Store for log-from-analysis
