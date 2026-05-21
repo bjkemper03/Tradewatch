@@ -11,7 +11,6 @@ import {
   checkEarningsRisk,
   finalizeScoredSignal,
   modelNotes,
-  pushAccountRiskIssues,
   pushCompletenessIssue,
   pushCushionIssue,
   pushDataConfidenceIssues,
@@ -27,6 +26,9 @@ export function analyzeCoveredCall(data, legs, expDateObj, dte, credit, prefs) {
   if (!sellLeg) return { error: 'Covered call requires a short CALL leg' };
   const ownsShares = prefs?.coveredCallOwnsShares ?? prefs?.ownsShares ?? false;
   const wantsAssignment = prefs?.coveredCallWantsAssignment ?? prefs?.wantsAssignment ?? false;
+  const rawShareBasis = safeNum(prefs?.coveredCallShareBasis);
+  const shareBasis = ownsShares && rawShareBasis > 0 ? rawShareBasis : price;
+  const shareBasisProvided = ownsShares && rawShareBasis > 0;
 
   const strike = safeNum(sellLeg.s);
   if (!strike) return { error: 'Enter the call strike price' };
@@ -60,11 +62,11 @@ export function analyzeCoveredCall(data, legs, expDateObj, dte, credit, prefs) {
   const payoff        = payoffSummary(legs, cr, price, [
     { label: 'Call strike', px: strike, note: 'Called away above here', kind: 'short' },
     { label: 'Stock $0', px: 0, note: 'Theoretical downside endpoint', kind: 'loss' },
-  ], { underlyingShares: ownsShares ? 100 * callQty : 0, underlyingBasis: price });
+  ], { underlyingShares: ownsShares ? 100 * callQty : 0, underlyingBasis: shareBasis });
   const maxProfit     = payoff.maxProfit;
   const maxLoss       = payoff.maxLoss;
   const downsideProtection = cr; // premium reduces cost basis
-  const breakeven     = firstBreakeven(payoff, parseFloat((price - cr).toFixed(2))); // current-price basis
+  const breakeven     = firstBreakeven(payoff, parseFloat((shareBasis - cr).toFixed(2)));
   const upsideCap     = strike;
   const upsideCapPct  = parseFloat(((strike - price) / price * 100).toFixed(1));
   const em            = calcExpectedMove(price, vol, dte);
@@ -86,7 +88,10 @@ export function analyzeCoveredCall(data, legs, expDateObj, dte, credit, prefs) {
   if (!ownsShares) {
     issues.push({ id:'covered_call_shares_not_confirmed', level:'red', category:'structure', scope:'strategy', strategy, metric:'ownsShares', value:false, scoreImpact:-55, message:'Covered call requires owned shares; otherwise the short call is naked undefined risk' });
   }
-  pushAccountRiskIssues(issues, strategy, maxLoss, prefs);
+  // Owned-share covered calls reuse an existing equity position, so max loss is
+  // stock exposure, not new option collateral. Until share cost basis and total
+  // account exposure are tracked across the portfolio, account-risk scoring here
+  // would overstate the risk of the call sale itself.
   pushEarningsScoreIssue(issues, strategy, earningsCheck, dte);
   pushCushionIssue(issues, strategy, {
     distance: strike - price,
@@ -134,6 +139,7 @@ export function analyzeCoveredCall(data, legs, expDateObj, dte, credit, prefs) {
 
     price, strike, breakeven,
     upsideCap, upsideCapPct,
+    cushionPct: upsideCapPct,
     downsideProtection,
     maxProfit,
     collateral: ownsShares ? 0 : null,
@@ -141,6 +147,8 @@ export function analyzeCoveredCall(data, legs, expDateObj, dte, credit, prefs) {
     maxLossUnlimited: payoff.maxLossUnlimited,
     ownsShares,
     wantsAssignment,
+    shareBasis,
+    shareBasisProvided,
     absDelta, deltaSource,
     greeks: greeks || null,
     positionGreeks,
@@ -154,6 +162,7 @@ export function analyzeCoveredCall(data, legs, expDateObj, dte, credit, prefs) {
     yieldData,
 
     probCalled, probNotCalled,
+    probWorthless: probNotCalled,
 
     supports, resistances,
     earningsRisk: earningsCheck.risk,
@@ -161,7 +170,9 @@ export function analyzeCoveredCall(data, legs, expDateObj, dte, credit, prefs) {
     earningsUnknown: earningsCheck.unknown,
     modelNotes: modelNotes(data, {
       greeks,
-      structureNote: 'Covered-call return uses current stock price as share basis. Add actual share cost basis before treating wheel return as exact.',
+      structureNote: shareBasisProvided
+        ? 'Covered-call max profit and breakeven use the entered average share price.'
+        : 'Covered-call return uses current stock price as share basis. Add actual average share price before treating return as exact.',
     }),
     maxLoss,
     payoff,

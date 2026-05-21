@@ -147,6 +147,10 @@ function cushionSubtext(d) {
   var ref = null;
   var detail = 'distance from key risk level';
 
+  if (sg === 'bwb' || sg === 'butterfly' || sg === 'ratio_spread') {
+    return 'Profit zone depends on breakevens and body/ratio geometry';
+  }
+
   if (sg === 'credit_spread' && sellPut) {
     ref = sellPut.s;
     detail = 'to short put; above this can expire worthless';

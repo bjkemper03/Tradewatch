@@ -65,6 +65,7 @@ function renderAnalyzeForm() {
     if ($('az-ctx')) $('az-ctx').value = remembered.notes || '';
     if ($('az-cc-own-shares')) $('az-cc-own-shares').checked = remembered.ownsShares === true;
     if ($('az-cc-wants-assignment')) $('az-cc-wants-assignment').checked = remembered.wantsAssignment === true;
+    if ($('az-cc-share-basis')) $('az-cc-share-basis').value = remembered.shareBasisProvided && remembered.shareBasis ? remembered.shareBasis : '';
     azUpdateCol();
     renderAnalysisResult(remembered);
   }
@@ -101,6 +102,10 @@ function renderAnalyzeStrategyContext() {
         '<input id="az-cc-wants-assignment" type="checkbox">' +
         '<span>I want assignment</span>' +
       '</label>' +
+      '<div class="strategy-context-field">' +
+        '<label>Avg share price</label>' +
+        '<input id="az-cc-share-basis" type="number" step="0.01" placeholder="Optional">' +
+      '</div>' +
     '</div>';
 }
 

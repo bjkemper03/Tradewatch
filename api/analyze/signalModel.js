@@ -40,6 +40,14 @@ function defaultScoreImpact(issue, level) {
 export function createIssue(issue) {
   const level = normalizeLevel(issue.level);
   const hasScoreImpact = Object.prototype.hasOwnProperty.call(issue, 'scoreImpact');
+  const message = issue.message || issue.msg || '';
+  const isPlaceholder = /placeholder/i.test(message);
+  const scoreImpact = isPlaceholder
+    ? 0
+    : hasScoreImpact ? issue.scoreImpact : defaultScoreImpact(issue, level);
+  const affectsSignal = isPlaceholder
+    ? false
+    : issue.affectsSignal ?? (level !== 'info');
   return {
     id: issue.id || `${issue.category || 'model'}_${level}`,
     level,
@@ -51,11 +59,11 @@ export function createIssue(issue) {
     warnAt: issue.warnAt ?? null,
     redAt: issue.redAt ?? null,
     blocking: !!issue.blocking,
-    scoreImpact: hasScoreImpact ? issue.scoreImpact : defaultScoreImpact(issue, level),
-    message: issue.message || issue.msg || '',
+    scoreImpact,
+    message,
     detail: issue.detail || null,
     source: issue.source || 'calculated',
-    affectsSignal: issue.affectsSignal ?? (level !== 'info'),
+    affectsSignal,
   };
 }
 

@@ -279,6 +279,9 @@ body.desktop .analysis-shell{margin:0}
 .strategy-context-box{margin:0 0 12px;padding:12px 14px;background:var(--surface2);border:1px solid var(--border);border-radius:8px;display:flex;gap:16px;align-items:center;flex-wrap:wrap}
 .strategy-context-check{display:flex;gap:8px;align-items:center;color:var(--text2);font-size:12px;font-weight:600;cursor:pointer}
 .strategy-context-check input{width:15px;height:15px;accent-color:var(--blue2)}
+.strategy-context-field{display:flex;gap:8px;align-items:center;margin-left:auto}
+.strategy-context-field label{font-size:10px;color:var(--text3);font-weight:800;letter-spacing:.45px;text-transform:uppercase;white-space:nowrap}
+.strategy-context-field input{width:112px;height:32px;font-family:var(--mono);font-size:12px}
 .structure-warning{padding:11px 13px;background:rgba(245,158,11,.08);border:1px solid rgba(245,158,11,.28);border-radius:10px;color:#fbbf24;font-size:12px;line-height:1.45}
 @media(max-width:760px){
   .analysis-hero{grid-template-columns:auto minmax(0,1fr)}
@@ -289,6 +292,7 @@ body.desktop .analysis-shell{margin:0}
   .universal-metrics{grid-template-columns:repeat(2,minmax(0,1fr))}
   .payoff-head{display:grid}
   .payoff-levels{grid-template-columns:1fr}
+  .strategy-context-field{margin-left:0;width:100%}
 }
 .stats-range button.active{border-color:var(--blue);color:var(--blue2);background:var(--blue-dim)}
 .stats-chart-wrap{height:180px;position:relative;border:1px solid var(--border);border-radius:10px;background:var(--surface2);overflow:hidden}

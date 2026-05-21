@@ -189,6 +189,7 @@ export function pushScoredIssue(issues, {
   warnAt = null,
   redAt = null,
   scoreImpact,
+  affectsSignal,
   message,
 }) {
   issues.push({
@@ -202,6 +203,7 @@ export function pushScoredIssue(issues, {
     warnAt,
     redAt,
     scoreImpact,
+    affectsSignal,
     message,
   });
 }
@@ -239,7 +241,6 @@ export function pushDteFitIssue(issues, strategy, dte, {
 } = {}) {
   if (dte == null || !Number.isFinite(dte)) return;
   if (dte >= min && dte <= max) return;
-  const severe = severeBelow != null && dte < severeBelow;
   pushScoredIssue(issues, {
     id: issueId(strategy, dte < min ? 'dte_below_fit' : 'dte_above_fit'),
     level: 'yellow',
@@ -249,7 +250,8 @@ export function pushDteFitIssue(issues, strategy, dte, {
     metric: 'dte',
     value: dte,
     warnAt: dte < min ? min : max,
-    scoreImpact: severe ? -10 : -5,
+    scoreImpact: 0,
+    affectsSignal: false,
     message: `${dte} DTE is outside the placeholder ${label} fit range (${min}-${max})`,
   });
 }

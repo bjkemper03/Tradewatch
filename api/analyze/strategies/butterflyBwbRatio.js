@@ -194,6 +194,7 @@ export function analyzeButterflyBWB(data, legs, expDateObj, dte, credit, prefs, 
 
     probMaxProfit:  probs?.probMaxProfit || null,
     probAnyProfit:  probs?.probAnyProfit || null,
+    probWorthless:  probs?.probAnyProfit || null,
     profitTiers:    probs?.tiers         || [],
     expectedValue: null,
 

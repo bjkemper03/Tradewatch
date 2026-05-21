@@ -9,6 +9,7 @@ async function runAnalysis() {
   var entryType = $('az-entry') ? $('az-entry').value : (isDebitStrat(azStrat) ? 'debit' : 'credit');
   var ccOwnsShares = $('az-cc-own-shares') ? $('az-cc-own-shares').checked : false;
   var ccWantsAssignment = $('az-cc-wants-assignment') ? $('az-cc-wants-assignment').checked : false;
+  var ccShareBasis = safeNum($('az-cc-share-basis') ? $('az-cc-share-basis').value : 0);
   if (!ticker) { alert('Enter a ticker symbol'); return; }
 
   var btn = $('az-btn');
@@ -37,7 +38,8 @@ async function runAnalysis() {
           accountSize:   prefs.accountSize,
           startingAccountSize:prefs.startingAccountSize,
           coveredCallOwnsShares: azStrat === 'COVERED CALL' ? ccOwnsShares : undefined,
-          coveredCallWantsAssignment: azStrat === 'COVERED CALL' ? ccWantsAssignment : undefined
+          coveredCallWantsAssignment: azStrat === 'COVERED CALL' ? ccWantsAssignment : undefined,
+          coveredCallShareBasis: azStrat === 'COVERED CALL' && ccShareBasis > 0 ? ccShareBasis : undefined
         }
       }),
       signal: AbortSignal.timeout(25000)
@@ -58,6 +60,8 @@ async function runAnalysis() {
     if (azStrat === 'COVERED CALL') {
       d.ownsShares = ccOwnsShares;
       d.wantsAssignment = ccWantsAssignment;
+      d.shareBasis = ccShareBasis > 0 ? ccShareBasis : d.shareBasis;
+      d.shareBasisProvided = ccShareBasis > 0;
     }
     lastAnalysisResult = JSON.parse(JSON.stringify(d));
 
@@ -89,6 +93,8 @@ async function runAnalysis() {
       wheelScenarios:d.wheelScenarios|| null,
       probWorthless: d.probWorthless || null,
       profitTargets: d.profitTargets || null,
+      shareBasis:    d.shareBasis    || null,
+      shareBasisProvided: d.shareBasisProvided || false,
       modelNotes:    d.modelNotes    || [],
       structureWarning: d.structureWarning || null,
       selectedStrategy: d.selectedStrategy || azStrat,

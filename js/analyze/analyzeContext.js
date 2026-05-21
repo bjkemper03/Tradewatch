@@ -113,7 +113,7 @@ function renderTradeContext(d) {
     if (d.openingCredit != null) primary.push(mini('Opening credit', fmtMoney(d.openingCredit), 'var(--green)', 'Collected at entry'));
     if (d.openingDebit != null) primary.push(mini('Opening debit', fmtMoney(d.openingDebit), 'var(--red)', 'Paid at entry'));
     var tc3 = touchCard(); if (tc3) primary.push(tc3);
-    if (d.creditCapturePct != null) primary.push(mini('Credit capture', d.creditCapturePct + '%', d.creditCapturePct >= 60 ? 'var(--green)' : 'var(--yellow)', 'If it moves away from body'));
+    if (d.creditCapturePct != null) primary.push(mini('Credit / max profit', d.creditCapturePct + '%', d.creditCapturePct >= 60 ? 'var(--green)' : 'var(--yellow)', 'Opening credit vs modeled max profit'));
     if (d.wingRatioLabel) primary.push(mini('Wing ratio', d.wingRatioLabel, 'var(--text)', 'Structure balance'));
   } else if (sg === 'long_call' || sg === 'long_put') {
     var rt = realisticTargetTable(); if (rt) primary.push(rt);
